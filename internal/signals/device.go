@@ -37,8 +37,8 @@ func (p *DeviceProvider) Evaluate(ctx context.Context, evalCtx *EvalContext, db 
 		SELECT a.trust_tier
 		FROM observation o
 		JOIN assessment a ON a.subject_id = o.subject_id
-		WHERE o.observation_type = 'device_fingerprint'
-		  AND o.source_data->>'fingerprint' = $1
+		WHERE o.observation_type = 'registration'
+		  AND o.source_data->>'device_fingerprint' = $1
 		  AND o.subject_id != $2::uuid
 		ORDER BY a.created_at DESC
 		LIMIT 1

@@ -28,9 +28,8 @@ func (r *AssessmentRepository) CreateAssessment(ctx context.Context, assessment 
 		INSERT INTO assessment (
 			assessment_id, contract_version, idempotency_key, subject_id,
 			assessment_type, trust_tier, risk_band, risk_score, decision,
-			reason_codes, policy_version, status, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-		ON CONFLICT (idempotency_key) DO NOTHING
+			reason_codes, required_actions, policy_version, status, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING assessment_id
 	`
 
@@ -45,6 +44,7 @@ func (r *AssessmentRepository) CreateAssessment(ctx context.Context, assessment 
 		assessment.RiskScore,
 		assessment.Decision,
 		pq.Array(assessment.ReasonCodes),
+		pq.Array(assessment.RequiredActions),
 		assessment.PolicyVersion,
 		assessment.Status,
 		assessment.CreatedAt,
@@ -63,7 +63,8 @@ func (r *AssessmentRepository) GetAssessmentByID(ctx context.Context, assessment
 	query := `
 		SELECT assessment_id, contract_version, idempotency_key, subject_id,
 			   assessment_type, trust_tier, risk_band, risk_score, decision,
-			   reason_codes, policy_version, status, created_at, updated_at, completed_at
+			   reason_codes, required_actions, policy_version, status,
+			   created_at, updated_at, completed_at
 		FROM assessment
 		WHERE assessment_id = $1
 	`
@@ -71,6 +72,7 @@ func (r *AssessmentRepository) GetAssessmentByID(ctx context.Context, assessment
 	var assessment models.Assessment
 	var completedAt sql.NullTime
 	var reasonCodes pq.StringArray
+	var requiredActions pq.StringArray
 
 	err := r.db.QueryRowContext(ctx, query, assessmentID).Scan(
 		&assessment.AssessmentID,
@@ -83,6 +85,7 @@ func (r *AssessmentRepository) GetAssessmentByID(ctx context.Context, assessment
 		&assessment.RiskScore,
 		&assessment.Decision,
 		&reasonCodes,
+		&requiredActions,
 		&assessment.PolicyVersion,
 		&assessment.Status,
 		&assessment.CreatedAt,
@@ -98,6 +101,7 @@ func (r *AssessmentRepository) GetAssessmentByID(ctx context.Context, assessment
 	}
 
 	assessment.ReasonCodes = []string(reasonCodes)
+	assessment.RequiredActions = []string(requiredActions)
 	if completedAt.Valid {
 		assessment.CompletedAt = &completedAt.Time
 	}
@@ -105,14 +109,17 @@ func (r *AssessmentRepository) GetAssessmentByID(ctx context.Context, assessment
 	return &assessment, nil
 }
 
-// GetAssessmentByIdempotencyKey retrieves an assessment by idempotency key
-func (r *AssessmentRepository) GetAssessmentByIdempotencyKey(ctx context.Context, idempotencyKey string) (*models.Assessment, error) {
+// GetAssessmentByIdempotencyKey retrieves an assessment by idempotency key within the TTL window.
+// ttlHours=0 disables the time filter and matches any entry.
+func (r *AssessmentRepository) GetAssessmentByIdempotencyKey(ctx context.Context, idempotencyKey string, ttlHours int) (*models.Assessment, error) {
 	query := `
 		SELECT assessment_id, contract_version, idempotency_key, subject_id,
 			   assessment_type, trust_tier, risk_band, risk_score, decision,
-			   reason_codes, policy_version, status, created_at, updated_at, completed_at
+			   reason_codes, required_actions, policy_version, status,
+			   created_at, updated_at, completed_at
 		FROM assessment
 		WHERE idempotency_key = $1
+		  AND ($2 = 0 OR created_at > now() - make_interval(hours := $2))
 		ORDER BY created_at DESC
 		LIMIT 1
 	`
@@ -120,8 +127,9 @@ func (r *AssessmentRepository) GetAssessmentByIdempotencyKey(ctx context.Context
 	var assessment models.Assessment
 	var completedAt sql.NullTime
 	var reasonCodes pq.StringArray
+	var requiredActions pq.StringArray
 
-	err := r.db.QueryRowContext(ctx, query, idempotencyKey).Scan(
+	err := r.db.QueryRowContext(ctx, query, idempotencyKey, ttlHours).Scan(
 		&assessment.AssessmentID,
 		&assessment.ContractVersion,
 		&assessment.IdempotencyKey,
@@ -132,6 +140,7 @@ func (r *AssessmentRepository) GetAssessmentByIdempotencyKey(ctx context.Context
 		&assessment.RiskScore,
 		&assessment.Decision,
 		&reasonCodes,
+		&requiredActions,
 		&assessment.PolicyVersion,
 		&assessment.Status,
 		&assessment.CreatedAt,
@@ -147,6 +156,7 @@ func (r *AssessmentRepository) GetAssessmentByIdempotencyKey(ctx context.Context
 	}
 
 	assessment.ReasonCodes = []string(reasonCodes)
+	assessment.RequiredActions = []string(requiredActions)
 	if completedAt.Valid {
 		assessment.CompletedAt = &completedAt.Time
 	}

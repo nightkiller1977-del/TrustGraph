@@ -34,8 +34,8 @@ func (p *VelocityProvider) Evaluate(ctx context.Context, evalCtx *EvalContext, d
 	query := `
 		SELECT COUNT(DISTINCT o.subject_id)
 		FROM observation o
-		WHERE o.observation_type = 'ip_address'
-		  AND o.source_data->>'ip' = $1
+		WHERE o.observation_type = 'registration'
+		  AND o.source_data->>'ip_address' = $1
 		  AND o.created_at > now() - interval '1 hour'
 	`
 

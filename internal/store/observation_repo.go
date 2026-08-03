@@ -25,6 +25,11 @@ func (r *ObservationRepository) RecordObservation(ctx context.Context, assessmen
 		return fmt.Errorf("failed to marshal source_data: %w", err)
 	}
 
+	var assessmentParam interface{}
+	if assessmentID != uuid.Nil {
+		assessmentParam = assessmentID
+	}
+
 	query := `
 		INSERT INTO observation (
 			assessment_id, subject_id, observation_type, plane, source,
@@ -33,7 +38,7 @@ func (r *ObservationRepository) RecordObservation(ctx context.Context, assessmen
 	`
 
 	_, err = r.db.ExecContext(ctx, query,
-		assessmentID,
+		assessmentParam,
 		subjectID,
 		observationType,
 		plane,

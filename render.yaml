@@ -1,3 +1,5 @@
+# Production: TrustGraph uses its own managed Postgres on Render.
+# Local dev: TrustGraph shares ConnectionSphere's Postgres container (see docker-compose.yml).
 services:
   - type: web
     name: trustgraph-api

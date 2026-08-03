@@ -87,17 +87,34 @@ func (a *AuditLogger) Log(ctx context.Context, event AuditEvent) {
 }
 
 // LogAssessment is a convenience method for assessment-related audit events.
-func (a *AuditLogger) LogAssessment(ctx context.Context, action string, assessmentID uuid.UUID, subjectID uuid.UUID, details map[string]interface{}, requestID string) {
+func (a *AuditLogger) LogAssessment(ctx context.Context, action string, assessmentID *uuid.UUID, subjectID uuid.UUID, details map[string]interface{}, requestID string) {
 	a.Log(ctx, AuditEvent{
 		Plane:        PlaneA,
 		Action:       action,
 		Actor:        "trustgraph-api",
 		ActorType:    ActorTypeService,
 		ResourceType: "assessment",
-		ResourceID:   &assessmentID,
+		ResourceID:   assessmentID,
 		SubjectID:    &subjectID,
 		Details:      details,
 		Result:       "ok",
+		RequestID:    requestID,
+	})
+}
+
+// LogAssessmentError is a convenience method for failed assessment audit events.
+func (a *AuditLogger) LogAssessmentError(ctx context.Context, action string, assessmentID *uuid.UUID, subjectID uuid.UUID, details map[string]interface{}, errorMsg string, requestID string) {
+	a.Log(ctx, AuditEvent{
+		Plane:        PlaneA,
+		Action:       action,
+		Actor:        "trustgraph-api",
+		ActorType:    ActorTypeService,
+		ResourceType: "assessment",
+		ResourceID:   assessmentID,
+		SubjectID:    &subjectID,
+		Details:      details,
+		Result:       "error",
+		ErrorMessage: errorMsg,
 		RequestID:    requestID,
 	})
 }

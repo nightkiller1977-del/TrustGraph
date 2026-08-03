@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/nightkiller1977-del/trustgraph/internal/audit"
+	"github.com/nightkiller1977-del/trustgraph/internal/config"
 	"github.com/nightkiller1977-del/trustgraph/internal/models"
 	"github.com/nightkiller1977-del/trustgraph/internal/policy"
 	"github.com/nightkiller1977-del/trustgraph/internal/signals"
@@ -18,20 +19,22 @@ import (
 )
 
 type AssessmentHandler struct {
-	db          *store.PostgresDB
-	logger      *zap.Logger
-	repo        *store.AssessmentRepository
-	subjects    *store.SubjectRepository
+	db           *store.PostgresDB
+	logger       *zap.Logger
+	cfg          *config.Config
+	repo         *store.AssessmentRepository
+	subjects     *store.SubjectRepository
 	observations *store.ObservationRepository
-	evaluator   *signals.Evaluator
+	evaluator    *signals.Evaluator
 	policyEngine *policy.Engine
-	auditor     *audit.AuditLogger
+	auditor      *audit.AuditLogger
 }
 
-func NewAssessmentHandler(db *store.PostgresDB, logger *zap.Logger) *AssessmentHandler {
+func NewAssessmentHandler(db *store.PostgresDB, logger *zap.Logger, cfg *config.Config) *AssessmentHandler {
 	return &AssessmentHandler{
 		db:           db,
 		logger:       logger,
+		cfg:          cfg,
 		repo:         store.NewAssessmentRepository(db),
 		subjects:     store.NewSubjectRepository(db),
 		observations: store.NewObservationRepository(db),
@@ -61,15 +64,15 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Idempotency check
-	existing, err := h.repo.GetAssessmentByIdempotencyKey(ctx, req.IdempotencyKey)
+	// Idempotency check (respects configured TTL)
+	existing, err := h.repo.GetAssessmentByIdempotencyKey(ctx, req.IdempotencyKey, h.cfg.IdempotencyTTLHours)
 	if err != nil {
 		h.logger.Error("idempotency check failed", zap.Error(err))
 		h.writeError(w, http.StatusInternalServerError, "internal_error", "Failed to process request")
 		return
 	}
 	if existing != nil {
-		h.auditor.LogAssessment(ctx, audit.ActionAssessmentCached, existing.AssessmentID, existing.SubjectID, map[string]interface{}{
+		h.auditor.LogAssessment(ctx, audit.ActionAssessmentCached, &existing.AssessmentID, existing.SubjectID, map[string]interface{}{
 			"idempotencyKey": req.IdempotencyKey,
 		}, requestID)
 		w.WriteHeader(http.StatusOK)
@@ -77,7 +80,7 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Find or create subject
+	// Find or create subject (revives soft-deleted subjects)
 	subjectID, err := h.subjects.FindOrCreateSubject(ctx, req.Subject.ConnectionSphereUserID)
 	if err != nil {
 		h.logger.Error("subject upsert failed", zap.Error(err))
@@ -85,7 +88,7 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	h.auditor.LogAssessment(ctx, audit.ActionAssessmentRequested, uuid.Nil, subjectID, map[string]interface{}{
+	h.auditor.LogAssessment(ctx, audit.ActionAssessmentRequested, nil, subjectID, map[string]interface{}{
 		"contractVersion":        req.ContractVersion,
 		"connectionSphereUserId": req.Subject.ConnectionSphereUserID,
 	}, requestID)
@@ -109,14 +112,6 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 
 	// Run signal providers
 	signalResults := h.evaluator.EvaluateAll(ctx, evalCtx, h.db)
-
-	// Record registration observation for velocity/device/image tracking
-	h.observations.RecordObservation(ctx, uuid.Nil, subjectID, "registration", "A", "trustgraph-api", map[string]interface{}{
-		"ip_address":        req.Signals.IPAddress,
-		"device_fingerprint": req.Signals.DeviceFingerprint,
-		"image_hash":        req.Signals.ImageHash,
-		"email":             req.Subject.Email,
-	}, 1.0)
 
 	// Convert signal results to policy input
 	policySignals := make([]policy.SignalResult, len(signalResults))
@@ -158,6 +153,7 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		RiskScore:       policyResult.RiskScore,
 		Decision:        policyResult.Decision,
 		ReasonCodes:     policyResult.ReasonCodes,
+		RequiredActions: policyResult.RequiredActions,
 		PolicyVersion:   policyResult.PolicyVersion,
 		Status:          models.AssessmentStatusComplete,
 		CreatedAt:       now,
@@ -167,14 +163,24 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 
 	if err := h.repo.CreateAssessment(ctx, assessment); err != nil {
 		h.logger.Error("assessment persist failed", zap.Error(err))
-		h.auditor.LogAssessment(ctx, audit.ActionAssessmentFailed, assessment.AssessmentID, subjectID, map[string]interface{}{
+		h.auditor.LogAssessmentError(ctx, audit.ActionAssessmentFailed, &assessment.AssessmentID, subjectID, map[string]interface{}{
 			"error": err.Error(),
-		}, requestID)
+		}, err.Error(), requestID)
 		h.writeError(w, http.StatusInternalServerError, "internal_error", "Failed to create assessment")
 		return
 	}
 
-	h.auditor.LogAssessment(ctx, audit.ActionAssessmentCompleted, assessment.AssessmentID, subjectID, map[string]interface{}{
+	// Record observation AFTER assessment exists so the FK is satisfied
+	if err := h.observations.RecordObservation(ctx, assessment.AssessmentID, subjectID, "registration", "A", "trustgraph-api", map[string]interface{}{
+		"ip_address":         req.Signals.IPAddress,
+		"device_fingerprint": req.Signals.DeviceFingerprint,
+		"image_hash":         req.Signals.ImageHash,
+		"email":              req.Subject.Email,
+	}, 1.0); err != nil {
+		h.logger.Warn("failed to record observation (non-fatal)", zap.Error(err))
+	}
+
+	h.auditor.LogAssessment(ctx, audit.ActionAssessmentCompleted, &assessment.AssessmentID, subjectID, map[string]interface{}{
 		"trustTier": assessment.TrustTier,
 		"riskBand":  assessment.RiskBand,
 		"riskScore": assessment.RiskScore,
@@ -189,7 +195,6 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 	)
 
 	resp := h.modelToResponse(assessment)
-	resp.RequiredActions = policyResult.RequiredActions
 	resp.Signals = models.SignalsProcessed{Processed: processed, Skipped: skipped}
 
 	w.WriteHeader(http.StatusOK)
@@ -232,6 +237,7 @@ func (h *AssessmentHandler) modelToResponse(a *models.Assessment) models.Assessm
 		RiskScore:       a.RiskScore,
 		Decision:        a.Decision,
 		ReasonCodes:     a.ReasonCodes,
+		RequiredActions: a.RequiredActions,
 		PolicyVersion:   a.PolicyVersion,
 		CompletedAt:     a.CompletedAt,
 	}

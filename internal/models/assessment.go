@@ -72,6 +72,7 @@ type Assessment struct {
 	RiskScore         int
 	Decision          string
 	ReasonCodes       []string
+	RequiredActions   []string
 	PolicyVersion     string
 	Status            string
 	CreatedAt         time.Time

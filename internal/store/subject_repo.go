@@ -25,7 +25,7 @@ func (r *SubjectRepository) FindOrCreateSubject(ctx context.Context, connectionS
 	insertQuery := `
 		INSERT INTO subject (connection_sphere_user_id)
 		VALUES ($1)
-		ON CONFLICT (connection_sphere_user_id) DO NOTHING
+		ON CONFLICT (connection_sphere_user_id) DO UPDATE SET deleted_at = NULL
 	`
 
 	_, err := r.db.ExecContext(ctx, insertQuery, connectionSphereUserID)

@@ -33,8 +33,8 @@ func (p *ImageProvider) Evaluate(ctx context.Context, evalCtx *EvalContext, db *
 	query := `
 		SELECT o.subject_id
 		FROM observation o
-		WHERE o.observation_type = 'image_hash'
-		  AND o.source_data->>'hash' = $1
+		WHERE o.observation_type = 'registration'
+		  AND o.source_data->>'image_hash' = $1
 		  AND o.subject_id != $2::uuid
 		LIMIT 1
 	`

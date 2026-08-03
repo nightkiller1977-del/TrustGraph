@@ -16,7 +16,7 @@ CREATE INDEX IF NOT EXISTS idx_subject_cs_user ON subject(connection_sphere_user
 CREATE TABLE IF NOT EXISTS assessment (
     assessment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     contract_version VARCHAR(10) NOT NULL,
-    idempotency_key VARCHAR(255) UNIQUE NOT NULL,
+    idempotency_key VARCHAR(255) NOT NULL,
     subject_id UUID NOT NULL REFERENCES subject(subject_id),
     assessment_type VARCHAR(50),
     trust_tier VARCHAR(50) DEFAULT 'provisional',
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS assessment (
     risk_score INTEGER,
     decision VARCHAR(50),
     reason_codes TEXT[],
+    required_actions TEXT[],
     policy_version VARCHAR(50),
     status VARCHAR(50) DEFAULT 'pending',
     created_at TIMESTAMPTZ DEFAULT now(),
@@ -33,6 +34,8 @@ CREATE TABLE IF NOT EXISTS assessment (
 );
 
 CREATE INDEX idx_assessment_subject ON assessment(subject_id);
+CREATE UNIQUE INDEX idx_assessment_idempotency_active ON assessment(idempotency_key)
+    WHERE created_at > now() - interval '24 hours';
 CREATE INDEX idx_assessment_idempotency ON assessment(idempotency_key);
 CREATE INDEX idx_assessment_created ON assessment(created_at DESC);
 
