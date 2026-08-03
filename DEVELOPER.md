@@ -2,363 +2,213 @@
 
 ## Overview
 
-TrustGraph is a Go-based trust and safety service for ConnectionSphere. Phase 1 implements the core assessment endpoint with basic first-party signal evaluation.
+TrustGraph is a Go trust and safety service for ConnectionSphere. Phase 1 implements Plane A (first-party signals): assessment endpoint, signal providers, policy engine, and audit logging.
 
 ## Project Structure
 
 ```
 trustgraph/
-├── cmd/
-│   └── trustgraph-api/
-│       └── main.go              # Entry point
+├── cmd/trustgraph-api/
+│   └── main.go                    # Entry point
 ├── internal/
 │   ├── api/
-│   │   ├── router.go            # HTTP router and middleware
-│   │   └── assessment_handler.go # Assessment endpoint handlers
+│   │   ├── router.go              # HTTP router + middleware
+│   │   └── assessment_handler.go  # POST/GET /v1/assessments
+│   ├── audit/
+│   │   ├── events.go              # Audit event types + constants
+│   │   └── logger.go              # Database-backed audit logger
 │   ├── config/
-│   │   └── config.go            # Configuration management
+│   │   └── config.go              # Environment config (envconfig)
 │   ├── models/
-│   │   └── assessment.go        # Data models and constants
-│   ├── store/
-│   │   ├── postgres.go          # Database connection
-│   │   ├── migrations.go        # Migration runner
-│   │   └── assessment_repo.go   # Assessment repository (queries)
-│   └── policy/
-│       └── [future: policy engine]
+│   │   └── assessment.go          # Request/response types, constants
+│   ├── policy/
+│   │   ├── engine.go              # Weighted-score policy engine
+│   │   ├── rules.go               # Hard-block rules
+│   │   └── version.go             # Policy versioning
+│   ├── signals/
+│   │   ├── provider.go            # Provider interface + types
+│   │   ├── email.go               # Email verification + disposable detection
+│   │   ├── phone.go               # Phone verification
+│   │   ├── device.go              # Device fingerprint sharing
+│   │   ├── velocity.go            # Registration velocity
+│   │   ├── image.go               # Image hash reuse
+│   │   └── evaluator.go           # Runs all providers
+│   └── store/
+│       ├── postgres.go            # Connection pool
+│       ├── migrations.go          # Migration runner
+│       ├── assessment_repo.go     # Assessment CRUD
+│       ├── subject_repo.go        # Subject upsert + queries
+│       └── observation_repo.go    # Observation recording + lookups
 ├── migrations/
-│   └── 001_init_schema.sql      # Initial database schema
-├── go.mod, go.sum              # Go module dependencies
-├── Dockerfile                  # Docker image build
-├── docker-compose.yml          # Local development environment
-├── Makefile                    # Convenience commands
-├── .env.example                # Environment variable template
-└── DEVELOPER.md                # This file
+│   └── 001_init_schema.sql        # All Phase 1 tables
+├── api/
+│   └── trustgraph.openapi.yaml    # OpenAPI 3.1 spec
+├── docs/
+│   └── COLDFUSION_INTEGRATION.md  # ConnectionSphere integration guide
+├── go.mod, go.sum
+├── Dockerfile                     # Multi-stage Go build
+├── docker-compose.yml             # Uses ConnectionSphere's Postgres
+├── render.yaml                    # Render deployment blueprint
+├── Makefile
+└── .env.example
 ```
 
 ## Quick Start
 
 ### Prerequisites
 
-- Docker and Docker Compose (for containerized development)
-- Or: Go 1.23+ and PostgreSQL 17+ (for local development)
+- Docker (ConnectionSphere stack must be running for shared Postgres)
+- Go 1.23+
 
-### Option 1: Docker (Recommended)
+### Shared Infrastructure
+
+TrustGraph reuses ConnectionSphere's PostgreSQL 17 container (`connectsphere-postgres`). It creates a separate `trustgraph` database inside the same instance.
 
 ```bash
-# Start services
-make up
+# 1. Start ConnectionSphere's Postgres first
+cd ~/Dev/Projects/ConnectionSphere
+docker compose up -d postgres
 
-# Check logs
-make logs
+# 2. Back in TrustGraph, create the database and start
+cd ~/Dev/Projects/TrustGraph
+make db-init   # Creates trustgraph database in ConnectionSphere's Postgres
+make up        # Starts TrustGraph API on port 8081
+```
 
-# Test the API
-curl -X POST http://localhost:8080/v1/assessments \
+### Test the API
+
+```bash
+curl -X POST http://localhost:8081/v1/assessments \
   -H "Content-Type: application/json" \
   -d '{
     "contractVersion": "2026-08-01",
-    "idempotencyKey": "registration:user-123:v1",
+    "idempotencyKey": "reg:user-123:v1",
     "subject": {
-      "connectionSphereUserId": "user-123"
+      "connectionSphereUserId": "user-123",
+      "email": "user@example.com"
     },
     "signals": {
       "emailVerified": true,
-      "phoneVerified": false
+      "phoneVerified": false,
+      "ipAddress": "192.168.1.100"
     }
   }'
-
-# Stop services
-make down
 ```
 
-### Option 2: Local Development
+### Local Development (no Docker for the API)
 
 ```bash
-# Install dependencies
-go mod download
-
-# Start PostgreSQL (requires local installation or Docker)
-# If using Docker just for Postgres:
-docker run -d \
-  --name trustgraph-postgres \
-  -e POSTGRES_USER=trustgraph \
-  -e POSTGRES_PASSWORD=trustgraph_dev_password \
-  -e POSTGRES_DB=trustgraph \
-  -p 5432:5432 \
-  postgres:17-alpine
-
-# Run migrations and start server
-make dev
-
-# Server runs on http://localhost:8080
+# ConnectionSphere Postgres must be running on port 5432
+make deps
+make dev    # Runs go run ./cmd/trustgraph-api
 ```
 
-## API Usage (Phase 1)
+## Architecture
 
-### Create Assessment
+### Assessment Flow
 
-**Endpoint:** `POST /v1/assessments`
-
-**Request:**
-```json
-{
-  "contractVersion": "2026-08-01",
-  "idempotencyKey": "registration:user-123:v1",
-  "subject": {
-    "connectionSphereUserId": "user-123",
-    "email": "user@example.com",
-    "phone": "+1-555-0123"
-  },
-  "signals": {
-    "emailVerified": true,
-    "phoneVerified": false,
-    "deviceToken": "device-abc-123",
-    "imageHash": "hash-xyz",
-    "deviceFingerprint": "fingerprint-data",
-    "ipAddress": "192.0.2.1"
-  }
-}
+```
+ConnectionSphere (ColdFusion)
+  │
+  │ POST /v1/assessments (300ms timeout, fail-open)
+  ▼
+TrustGraph API
+  ├── Idempotency check (cached? return immediately)
+  ├── Find/create subject
+  ├── Run signal providers (email, phone, device, velocity, image)
+  ├── Record observations (for future velocity/device/image lookups)
+  ├── Policy engine (weighted score + hard-block rules → tier + decision)
+  ├── Persist assessment
+  ├── Audit log
+  └── Return: {trustTier, riskScore, riskBand, decision, reasonCodes}
 ```
 
-**Response:**
-```json
-{
-  "contractVersion": "2026-08-01",
-  "assessmentId": "550e8400-e29b-41d4-a716-446655440000",
-  "status": "complete",
-  "trustTier": "provisional",
-  "requiredActions": ["VERIFY_EMAIL", "VERIFY_PHONE"],
-  "riskBand": "unknown",
-  "riskScore": 50,
-  "reasonCodes": ["EMAIL_VERIFIED", "PHONE_NOT_VERIFIED", "DEVICE_FIRST_SEEN"],
-  "policyVersion": "registration-v1",
-  "completedAt": "2026-08-03T12:34:56Z"
-}
-```
+### Signal Providers
 
-### Get Assessment
+| Provider | What it checks | Score range | Key reason codes |
+|----------|---------------|-------------|-----------------|
+| Email | Verification + disposable domain | 0-40 | EMAIL_VERIFIED, DISPOSABLE_EMAIL |
+| Phone | Verification status | 0-10 | PHONE_VERIFIED, PHONE_NOT_VERIFIED |
+| Device | Fingerprint sharing with other accounts | 0-30 | DEVICE_FIRST_SEEN, DEVICE_SHARED_WITH_ENFORCED |
+| Velocity | Registrations from same IP in 1 hour | 0-35 | HIGH_REGISTRATION_VELOCITY |
+| Image | Profile image hash reuse | 0-20 | IMAGE_HASH_REUSED |
 
-**Endpoint:** `GET /v1/assessments/{assessmentId}`
+### Policy Engine
 
-**Response:** Same as create assessment response
-
-### Health Check
-
-**Endpoint:** `GET /health`
-
-**Response:**
-```json
-{
-  "status": "ok"
-}
-```
-
-## Development Workflow
-
-### Adding a Signal Provider (Phase 2)
-
-1. Create new file in `internal/signals/`: `internal/signals/my_signal.go`
-2. Implement signal evaluation function:
-   ```go
-   func EvaluateMySignal(ctx context.Context, signals models.SignalsData) ([]string, error) {
-       // Evaluate signal
-       // Return reason codes
-   }
-   ```
-3. Call from `assessment_handler.go` in `evaluateSignals()`
-4. Update `decideOutcome()` if new signal affects tier decision
-5. Write unit tests in `internal/signals/my_signal_test.go`
-
-### Adding an API Endpoint
-
-1. Create handler method in `assessment_handler.go` or new file
-2. Register route in `internal/api/router.go`
-3. Add OpenAPI definition to docs
-4. Test via curl or Postman
-
-### Database Changes
-
-1. Create migration file: `migrations/NNN_description.sql`
-2. Number sequentially (001, 002, etc.)
-3. Run migrations automatically on startup
-4. Update models in `internal/models/` as needed
+1. Compute weighted risk score: `sum(score * confidence) / sum(confidence)`
+2. Check hard-block rules (first match wins):
+   - DISPOSABLE_EMAIL + HIGH_VELOCITY → deny
+   - DEVICE_SHARED_WITH_ENFORCED → review
+   - IMAGE_REUSED + HIGH_VELOCITY → review
+3. Map score to tier: 0-20 standard, 21-40 provisional/low, 41-60 provisional/elevated, 61-80 provisional/high, 81+ limited
+4. Attach required actions (VERIFY_EMAIL, VERIFY_PHONE, REVIEW_BY_HUMAN)
 
 ## Configuration
 
-Environment variables (see `.env.example`):
-
 ```bash
 TRUSTGRAPH_PORT=8080                           # HTTP port
-TRUSTGRAPH_ENVIRONMENT=development             # development or production
-TRUSTGRAPH_DATABASE_URL=postgres://...         # PostgreSQL connection string
+TRUSTGRAPH_ENVIRONMENT=development             # development | production
+TRUSTGRAPH_DATABASE_URL=postgres://...         # ConnectionSphere Postgres → trustgraph db
 TRUSTGRAPH_ASSESSMENT_TIMEOUT_MS=300           # Assessment budget (ms)
 TRUSTGRAPH_CIRCUIT_BREAKER_MAX_FAILURES=5      # Circuit breaker threshold
 TRUSTGRAPH_CIRCUIT_BREAKER_WINDOW_MINS=5       # Circuit breaker window
-TRUSTGRAPH_LOG_LEVEL=debug                     # Logger level
+TRUSTGRAPH_LOG_LEVEL=debug                     # zap log level
 ```
 
 ## Testing
 
-### Unit Tests
-
 ```bash
-# Run all tests
-make test
-
-# Run specific package
-go test -v ./internal/models/...
-
-# Run with coverage
-go test -cover ./...
+make test                          # All tests
+go test -v ./internal/policy/...   # Policy engine only
+go test -v ./internal/signals/...  # Signal providers only
+go test -cover ./...               # Coverage report
 ```
 
-### Integration Tests (Phase 1.5)
-
-Create a `*_integration_test.go` file:
-
-```go
-func TestAssessmentFlow(t *testing.T) {
-    // Requires test database (docker-compose test?)
-    // Test full request → response cycle
-}
-```
-
-### Manual Testing
-
-Use curl or Postman:
+## Database
 
 ```bash
-# Create assessment
-curl -X POST http://localhost:8080/v1/assessments \
-  -H "Content-Type: application/json" \
-  -d @test-assessment.json
+# Connect to the shared Postgres
+docker exec -it connectsphere-postgres psql -U connectsphere -d trustgraph
 
-# Get assessment (copy assessmentId from response)
-curl http://localhost:8080/v1/assessments/{assessmentId}
-
-# Health check
-curl http://localhost:8080/health
-```
-
-## Debugging
-
-### Logs
-
-```bash
-# View container logs
-make logs
-
-# View specific service
-docker-compose logs -f api
-docker-compose logs -f postgres
-```
-
-### Database Inspection
-
-```bash
-# Connect to PostgreSQL
-docker-compose exec postgres psql -U trustgraph -d trustgraph
-
-# View assessments
-SELECT * FROM assessment;
-
-# View audit logs
+# Useful queries
+SELECT * FROM assessment ORDER BY created_at DESC LIMIT 5;
 SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 10;
+SELECT * FROM observation WHERE observation_type = 'registration' ORDER BY created_at DESC;
+SELECT * FROM schema_migrations;
 ```
 
-### Code Debugging
+## Deployment
 
-Add debug logging:
+### Render (Production)
 
-```go
-logger.Debug("Debug message", zap.String("key", "value"))
-```
-
-Set `LOG_LEVEL=debug` in environment.
-
-## Build and Deploy
-
-### Docker Build
+The `render.yaml` blueprint provisions:
+- `trustgraph-api` — web service (Docker, starter plan)
+- `trustgraph-db` — PostgreSQL 17 (starter plan, Oregon)
 
 ```bash
-# Build image (also done by docker-compose build)
-docker build -t trustgraph:latest .
-
-# Run standalone
-docker run -e TRUSTGRAPH_DATABASE_URL=... -p 8080:8080 trustgraph:latest
+# Deploy via Render dashboard or CLI
+render blueprint apply
 ```
 
-### Local Binary
+### Docker (Local)
 
 ```bash
-go build -o trustgraph ./cmd/trustgraph-api
-./trustgraph
+make build   # Build image
+make up      # Start (joins ConnectionSphere network)
+make logs    # Stream logs
+make down    # Stop
 ```
 
-### Render Deployment (Phase 1)
+## Adding a Signal Provider
 
-1. Connect GitHub repository to Render
-2. Create Render Postgres service
-3. Create Render Web Service with:
-   - Build command: `go build -o trustgraph ./cmd/trustgraph-api`
-   - Start command: `./trustgraph`
-   - Environment variables: copy from `.env.example`
-4. Set `TRUSTGRAPH_DATABASE_URL` to Render Postgres URL
-
-## Common Issues
-
-### "connection refused" to PostgreSQL
-
-Make sure PostgreSQL is running:
-```bash
-# Docker
-docker-compose ps
-docker-compose up -d postgres
-
-# Local
-psql -U trustgraph -d trustgraph -c "SELECT 1"
-```
-
-### "migration already applied"
-
-This is expected. Migrations track applied versions in `schema_migrations` table.
-
-### Port 8080 already in use
-
-Change port:
-```bash
-docker-compose down
-TRUSTGRAPH_PORT=8081 make up
-```
-
-Or locally:
-```bash
-TRUSTGRAPH_PORT=8081 go run ./cmd/trustgraph-api/main.go
-```
-
-## Next Steps (Phase 1.5+)
-
-1. **Real signal providers**: Implement device fingerprinting, velocity, email/phone verification
-2. **Policy engine**: Move decision logic from handler to dedicated policy module
-3. **Circuit breaker**: Implement actual circuit breaker for signal providers
-4. **Audit logging**: Add comprehensive audit events
-5. **Async assessment**: Queue slow signals, return provisional tier immediately
-6. **Tests**: Unit and integration test coverage
+1. Create `internal/signals/my_signal.go` implementing the `Provider` interface
+2. Register it in `evaluator.go` → `NewEvaluator()`
+3. Add reason code constants to `internal/models/assessment.go`
+4. Add hard-block rules to `internal/policy/rules.go` if needed
+5. Write tests in `internal/signals/my_signal_test.go`
 
 ## References
 
-- [PHASE_1_IMPLEMENTATION.md](./PHASE_1_IMPLEMENTATION.md) — Technical design
-- [README.md](./README.md) — Architecture overview
-- [ConnectionSphere integration](../connectionsphere/docs/TRUSTGRAPH_INTEGRATION_PHASE_1.md) — How CS calls TrustGraph
-
-## Contributing
-
-1. Create branch from `main`
-2. Make changes
-3. Run tests: `make test`
-4. Run linter: `make lint`
-5. Create PR with reference to phase/issue
-6. Get review from team lead
-
----
-
-Questions? Check the docs or ask in the team channel.
+- [PHASE_1_IMPLEMENTATION.md](./PHASE_1_IMPLEMENTATION.md) — Full technical design
+- [OpenAPI spec](./api/trustgraph.openapi.yaml) — API contract
+- [ColdFusion Integration](./docs/COLDFUSION_INTEGRATION.md) — ConnectionSphere caller guide

@@ -1,0 +1,35 @@
+# Production: TrustGraph uses its own managed Postgres on Render.
+# Local dev: TrustGraph shares ConnectionSphere's Postgres container (see docker-compose.yml).
+services:
+  - type: web
+    name: trustgraph-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: TRUSTGRAPH_PORT
+        value: "8080"
+      - key: TRUSTGRAPH_ENVIRONMENT
+        value: production
+      - key: TRUSTGRAPH_LOG_LEVEL
+        value: info
+      - key: TRUSTGRAPH_DATABASE_URL
+        fromDatabase:
+          name: trustgraph-db
+          property: connectionString
+      - key: TRUSTGRAPH_ASSESSMENT_TIMEOUT_MS
+        value: "300"
+      - key: TRUSTGRAPH_CIRCUIT_BREAKER_MAX_FAILURES
+        value: "5"
+      - key: TRUSTGRAPH_CIRCUIT_BREAKER_WINDOW_MINS
+        value: "5"
+
+databases:
+  - name: trustgraph-db
+    plan: starter
+    region: oregon
+    postgresMajorVersion: "17"
+    databaseName: trustgraph
+    user: trustgraph

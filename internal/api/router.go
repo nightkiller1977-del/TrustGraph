@@ -6,11 +6,12 @@ import (
 	"github.com/gorilla/mux"
 	"go.uber.org/zap"
 
+	"github.com/nightkiller1977-del/trustgraph/internal/config"
 	"github.com/nightkiller1977-del/trustgraph/internal/store"
 )
 
 // NewRouter creates and configures the HTTP router
-func NewRouter(db *store.PostgresDB, logger *zap.Logger) *mux.Router {
+func NewRouter(db *store.PostgresDB, logger *zap.Logger, cfg *config.Config) *mux.Router {
 	router := mux.NewRouter()
 
 	// Health check endpoint
@@ -19,7 +20,7 @@ func NewRouter(db *store.PostgresDB, logger *zap.Logger) *mux.Router {
 	// v1 Assessment endpoints
 	v1 := router.PathPrefix("/v1").Subrouter()
 
-	assessmentHandler := NewAssessmentHandler(db, logger)
+	assessmentHandler := NewAssessmentHandler(db, logger, cfg)
 
 	v1.HandleFunc("/assessments", assessmentHandler.CreateAssessment).Methods("POST")
 	v1.HandleFunc("/assessments/{assessmentId}", assessmentHandler.GetAssessment).Methods("GET")
