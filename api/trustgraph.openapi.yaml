@@ -1,0 +1,258 @@
+openapi: 3.1.0
+info:
+  title: TrustGraph API
+  version: 0.1.0
+  description: |
+    Trust, safety, and verification service for ConnectionSphere.
+    Phase 1: First-party signals (Plane A) only.
+
+servers:
+  - url: http://localhost:8081
+    description: Local development (via ConnectionSphere Docker network)
+  - url: https://trustgraph-api.onrender.com
+    description: Render production
+
+paths:
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Health check
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /v1/assessments:
+    post:
+      operationId: createAssessment
+      summary: Request a trust assessment for a ConnectionSphere user
+      description: |
+        Evaluates first-party signals and returns a trust tier, risk score,
+        and decision. Idempotent — resending the same idempotencyKey within
+        24 hours returns the cached result.
+
+        Timeout: 300ms recommended from ColdFusion caller. If TrustGraph
+        is unavailable, the caller should fail-open to provisional tier.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssessmentRequest"
+            example:
+              contractVersion: "2026-08-01"
+              idempotencyKey: "reg-abc123-attempt1"
+              subject:
+                connectionSphereUserId: "usr_12345"
+                email: "user@example.com"
+                phone: "+15551234567"
+              signals:
+                emailVerified: true
+                phoneVerified: false
+                deviceFingerprint: "fp_a1b2c3d4"
+                ipAddress: "192.168.1.100"
+                imageHash: ""
+              requestContext:
+                userAgent: "Mozilla/5.0"
+                correlationId: "corr-xyz-789"
+      responses:
+        "200":
+          description: Assessment completed (or cached idempotent result)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssessmentResponse"
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/assessments/{assessmentId}:
+    get:
+      operationId: getAssessment
+      summary: Retrieve a previous assessment by ID
+      parameters:
+        - name: assessmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Assessment found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssessmentResponse"
+        "400":
+          description: Invalid assessment ID format
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Assessment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  schemas:
+    AssessmentRequest:
+      type: object
+      required:
+        - contractVersion
+        - idempotencyKey
+        - subject
+      properties:
+        contractVersion:
+          type: string
+          description: API contract version for backward compatibility
+          example: "2026-08-01"
+        idempotencyKey:
+          type: string
+          description: Unique key per request. Same key within 24h returns cached result.
+          example: "reg-abc123-attempt1"
+        subject:
+          $ref: "#/components/schemas/SubjectData"
+        signals:
+          $ref: "#/components/schemas/SignalsData"
+        requestContext:
+          $ref: "#/components/schemas/RequestContext"
+
+    SubjectData:
+      type: object
+      required:
+        - connectionSphereUserId
+      properties:
+        connectionSphereUserId:
+          type: string
+          example: "usr_12345"
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+
+    SignalsData:
+      type: object
+      properties:
+        emailVerified:
+          type: boolean
+        phoneVerified:
+          type: boolean
+        deviceToken:
+          type: string
+        deviceFingerprint:
+          type: string
+        ipAddress:
+          type: string
+          format: ipv4
+        imageHash:
+          type: string
+          description: Perceptual hash of profile image
+
+    RequestContext:
+      type: object
+      properties:
+        userAgent:
+          type: string
+        correlationId:
+          type: string
+
+    AssessmentResponse:
+      type: object
+      properties:
+        contractVersion:
+          type: string
+        assessmentId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, complete, error, deferred]
+        trustTier:
+          type: string
+          enum: [provisional, standard, elevated, limited]
+          description: |
+            provisional — new user, limited capabilities until signals improve
+            standard — normal user, full capabilities
+            elevated — verified user, trust badges visible
+            limited — restricted, pending human review
+        riskBand:
+          type: string
+          enum: [low, elevated, high, unknown]
+        riskScore:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Higher = riskier
+        reasonCodes:
+          type: array
+          items:
+            type: string
+          description: Structured codes explaining the decision
+          example:
+            - EMAIL_VERIFIED
+            - PHONE_NOT_VERIFIED
+            - DEVICE_FIRST_SEEN
+        decision:
+          type: string
+          enum: [accept, verify, review, deny]
+        requiredActions:
+          type: array
+          items:
+            type: string
+          example:
+            - VERIFY_PHONE
+        policyVersion:
+          type: string
+          example: "registration-v1"
+        completedAt:
+          type: string
+          format: date-time
+        signals:
+          type: object
+          properties:
+            processed:
+              type: array
+              items:
+                type: string
+            skipped:
+              type: array
+              items:
+                type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: bad_request
+        message:
+          type: string
+          example: Missing required fields
+
+  securitySchemes:
+    ServiceAccountHeader:
+      type: apiKey
+      in: header
+      name: X-Service-Account
+      description: ConnectionSphere service account identifier

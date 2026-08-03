@@ -1,4 +1,5 @@
 -- Phase 1: Initial schema with Plane A (first-party signals) support
+-- Database: trustgraph (created in ConnectionSphere's PostgreSQL 17 instance)
 
 -- Subject table (maps to ConnectionSphere user)
 CREATE TABLE IF NOT EXISTS subject (
@@ -6,9 +7,10 @@ CREATE TABLE IF NOT EXISTS subject (
     connection_sphere_user_id VARCHAR(255) UNIQUE NOT NULL,
     external_id_verified BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT now(),
-    deleted_at TIMESTAMPTZ,
-    INDEX idx_subject_cs_user (connection_sphere_user_id)
+    deleted_at TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS idx_subject_cs_user ON subject(connection_sphere_user_id);
 
 -- Assessment table (trust decision)
 CREATE TABLE IF NOT EXISTS assessment (
@@ -19,7 +21,7 @@ CREATE TABLE IF NOT EXISTS assessment (
     assessment_type VARCHAR(50),
     trust_tier VARCHAR(50) DEFAULT 'provisional',
     risk_band VARCHAR(50),
-    risk_score INTEGER CHECK (risk_score >= 0 AND risk_score <= 100),
+    risk_score INTEGER,
     decision VARCHAR(50),
     reason_codes TEXT[],
     policy_version VARCHAR(50),
