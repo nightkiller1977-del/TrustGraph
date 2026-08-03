@@ -10,164 +10,216 @@ import (
 	"github.com/gorilla/mux"
 	"go.uber.org/zap"
 
+	"github.com/nightkiller1977-del/trustgraph/internal/audit"
+	"github.com/nightkiller1977-del/trustgraph/internal/config"
 	"github.com/nightkiller1977-del/trustgraph/internal/models"
+	"github.com/nightkiller1977-del/trustgraph/internal/policy"
+	"github.com/nightkiller1977-del/trustgraph/internal/signals"
 	"github.com/nightkiller1977-del/trustgraph/internal/store"
 )
 
-// AssessmentHandler handles assessment-related HTTP requests
 type AssessmentHandler struct {
-	db     *store.PostgresDB
-	logger *zap.Logger
-	repo   *store.AssessmentRepository
+	db           *store.PostgresDB
+	logger       *zap.Logger
+	cfg          *config.Config
+	repo         *store.AssessmentRepository
+	subjects     *store.SubjectRepository
+	observations *store.ObservationRepository
+	evaluator    *signals.Evaluator
+	policyEngine *policy.Engine
+	auditor      *audit.AuditLogger
 }
 
-// NewAssessmentHandler creates a new assessment handler
-func NewAssessmentHandler(db *store.PostgresDB, logger *zap.Logger) *AssessmentHandler {
+func NewAssessmentHandler(db *store.PostgresDB, logger *zap.Logger, cfg *config.Config) *AssessmentHandler {
 	return &AssessmentHandler{
-		db:     db,
-		logger: logger,
-		repo:   store.NewAssessmentRepository(db),
+		db:           db,
+		logger:       logger,
+		cfg:          cfg,
+		repo:         store.NewAssessmentRepository(db),
+		subjects:     store.NewSubjectRepository(db),
+		observations: store.NewObservationRepository(db),
+		evaluator:    signals.NewEvaluator(logger),
+		policyEngine: policy.NewEngine(logger),
+		auditor:      audit.NewAuditLogger(db, logger),
 	}
 }
 
-// CreateAssessment handles POST /v1/assessments
 func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
+	requestID := r.Header.Get("X-Request-ID")
+	if requestID == "" {
+		requestID = uuid.New().String()
+	}
+
 	var req models.AssessmentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Warn("Failed to decode assessment request", zap.Error(err))
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   "bad_request",
-			"message": "Invalid request body",
-		})
+		h.writeError(w, http.StatusBadRequest, "bad_request", "Invalid request body")
 		return
 	}
 
-	// Validate required fields
 	if req.ContractVersion == "" || req.IdempotencyKey == "" || req.Subject.ConnectionSphereUserID == "" {
-		h.logger.Warn("Missing required fields in assessment request",
-			zap.String("contract_version", req.ContractVersion),
-			zap.String("idempotency_key", req.IdempotencyKey),
-		)
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   "bad_request",
-			"message": "Missing required fields: contractVersion, idempotencyKey, subject.connectionSphereUserId",
-		})
+		h.writeError(w, http.StatusBadRequest, "bad_request", "Missing required fields: contractVersion, idempotencyKey, subject.connectionSphereUserId")
 		return
 	}
 
-	// Check for existing assessment with same idempotency key
-	existingAssessment, err := h.repo.GetAssessmentByIdempotencyKey(ctx, req.IdempotencyKey)
+	// Idempotency check (respects configured TTL)
+	existing, err := h.repo.GetAssessmentByIdempotencyKey(ctx, req.IdempotencyKey, h.cfg.IdempotencyTTLHours)
 	if err != nil {
-		h.logger.Error("Failed to check for existing assessment", zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   "internal_error",
-			"message": "Failed to process request",
-		})
+		h.logger.Error("idempotency check failed", zap.Error(err))
+		h.writeError(w, http.StatusInternalServerError, "internal_error", "Failed to process request")
 		return
 	}
-
-	if existingAssessment != nil {
-		// Return cached response
-		h.logger.Debug("Returning cached assessment",
-			zap.String("assessment_id", existingAssessment.AssessmentID.String()),
-			zap.String("idempotency_key", req.IdempotencyKey),
-		)
+	if existing != nil {
+		h.auditor.LogAssessment(ctx, audit.ActionAssessmentCached, &existing.AssessmentID, existing.SubjectID, map[string]interface{}{
+			"idempotencyKey": req.IdempotencyKey,
+		}, requestID)
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(h.modelToResponse(existingAssessment))
+		json.NewEncoder(w).Encode(h.modelToResponse(existing))
 		return
 	}
 
-	// Create new subject if needed
-	subjectID := uuid.New()
+	// Find or create subject (revives soft-deleted subjects)
+	subjectID, err := h.subjects.FindOrCreateSubject(ctx, req.Subject.ConnectionSphereUserID)
+	if err != nil {
+		h.logger.Error("subject upsert failed", zap.Error(err))
+		h.writeError(w, http.StatusInternalServerError, "internal_error", "Failed to create subject")
+		return
+	}
 
-	// Create assessment
+	h.auditor.LogAssessment(ctx, audit.ActionAssessmentRequested, nil, subjectID, map[string]interface{}{
+		"contractVersion":        req.ContractVersion,
+		"connectionSphereUserId": req.Subject.ConnectionSphereUserID,
+	}, requestID)
+
+	// Build evaluation context from request
+	evalCtx := &signals.EvalContext{
+		SubjectID:              subjectID.String(),
+		ConnectionSphereUserID: req.Subject.ConnectionSphereUserID,
+		Email:                  req.Subject.Email,
+		Phone:                  req.Subject.Phone,
+		EmailVerified:          req.Signals.EmailVerified,
+		PhoneVerified:          req.Signals.PhoneVerified,
+		DeviceFingerprint:      req.Signals.DeviceFingerprint,
+		DeviceToken:            req.Signals.DeviceToken,
+		IPAddress:              req.Signals.IPAddress,
+		ImageHash:              req.Signals.ImageHash,
+	}
+	if req.RequestContext != nil {
+		evalCtx.UserAgent = req.RequestContext.UserAgent
+	}
+
+	// Run signal providers
+	signalResults := h.evaluator.EvaluateAll(ctx, evalCtx, h.db)
+
+	// Convert signal results to policy input
+	policySignals := make([]policy.SignalResult, len(signalResults))
+	var processed []string
+	var skipped []string
+	for i, sr := range signalResults {
+		policySignals[i] = policy.SignalResult{
+			Provider:    sr.Provider,
+			ReasonCodes: sr.ReasonCodes,
+			Score:       sr.Score,
+			Confidence:  sr.Confidence,
+			Error:       sr.Error,
+		}
+		if sr.Error != nil {
+			skipped = append(skipped, sr.Provider)
+		} else {
+			processed = append(processed, sr.Provider)
+		}
+
+		h.auditor.LogSignal(ctx, sr.Provider, subjectID, statusFromError(sr.Error), map[string]interface{}{
+			"score":       sr.Score,
+			"confidence":  sr.Confidence,
+			"reasonCodes": sr.ReasonCodes,
+		}, requestID)
+	}
+
+	// Run policy engine
+	policyResult := h.policyEngine.Evaluate(policySignals)
+
+	now := time.Now()
 	assessment := &models.Assessment{
 		AssessmentID:    uuid.New(),
 		ContractVersion: req.ContractVersion,
 		IdempotencyKey:  req.IdempotencyKey,
 		SubjectID:       subjectID,
 		AssessmentType:  "registration",
-		TrustTier:       models.TrustTierProvisional, // Default to provisional
-		RiskBand:        models.RiskBandUnknown,
-		RiskScore:       0,
-		Decision:        "accept",
-		ReasonCodes:     []string{},
-		PolicyVersion:   "registration-v1",
-		Status:          models.AssessmentStatusComplete, // Phase 1: synchronous
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
+		TrustTier:       policyResult.TrustTier,
+		RiskBand:        policyResult.RiskBand,
+		RiskScore:       policyResult.RiskScore,
+		Decision:        policyResult.Decision,
+		ReasonCodes:     policyResult.ReasonCodes,
+		RequiredActions: policyResult.RequiredActions,
+		PolicyVersion:   policyResult.PolicyVersion,
+		Status:          models.AssessmentStatusComplete,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		CompletedAt:     &now,
 	}
 
-	// Evaluate signals (Phase 1: simple stub logic)
-	assessment.ReasonCodes = h.evaluateSignals(req.Signals)
-	assessment.TrustTier, assessment.RiskBand, assessment.RiskScore = h.decideOutcome(assessment.ReasonCodes)
-
-	// Persist assessment
 	if err := h.repo.CreateAssessment(ctx, assessment); err != nil {
-		h.logger.Error("Failed to create assessment", zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   "internal_error",
-			"message": "Failed to create assessment",
-		})
+		h.logger.Error("assessment persist failed", zap.Error(err))
+		h.auditor.LogAssessmentError(ctx, audit.ActionAssessmentFailed, &assessment.AssessmentID, subjectID, map[string]interface{}{
+			"error": err.Error(),
+		}, err.Error(), requestID)
+		h.writeError(w, http.StatusInternalServerError, "internal_error", "Failed to create assessment")
 		return
 	}
 
-	completedNow := time.Now()
-	assessment.CompletedAt = &completedNow
+	// Record observation AFTER assessment exists so the FK is satisfied
+	if err := h.observations.RecordObservation(ctx, assessment.AssessmentID, subjectID, "registration", "A", "trustgraph-api", map[string]interface{}{
+		"ip_address":         req.Signals.IPAddress,
+		"device_fingerprint": req.Signals.DeviceFingerprint,
+		"image_hash":         req.Signals.ImageHash,
+		"email":              req.Subject.Email,
+	}, 1.0); err != nil {
+		h.logger.Warn("failed to record observation (non-fatal)", zap.Error(err))
+	}
 
-	h.logger.Info("Assessment created",
+	h.auditor.LogAssessment(ctx, audit.ActionAssessmentCompleted, &assessment.AssessmentID, subjectID, map[string]interface{}{
+		"trustTier": assessment.TrustTier,
+		"riskBand":  assessment.RiskBand,
+		"riskScore": assessment.RiskScore,
+		"decision":  assessment.Decision,
+	}, requestID)
+
+	h.logger.Info("assessment created",
 		zap.String("assessment_id", assessment.AssessmentID.String()),
 		zap.String("trust_tier", assessment.TrustTier),
-		zap.String("risk_band", assessment.RiskBand),
+		zap.String("decision", assessment.Decision),
+		zap.Int("risk_score", assessment.RiskScore),
 	)
 
+	resp := h.modelToResponse(assessment)
+	resp.Signals = models.SignalsProcessed{Processed: processed, Skipped: skipped}
+
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(h.modelToResponse(assessment))
+	json.NewEncoder(w).Encode(resp)
 }
 
-// GetAssessment handles GET /v1/assessments/{assessmentId}
 func (h *AssessmentHandler) GetAssessment(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	vars := mux.Vars(r)
-	assessmentIDStr := vars["assessmentId"]
-
-	assessmentID, err := uuid.Parse(assessmentIDStr)
+	assessmentID, err := uuid.Parse(mux.Vars(r)["assessmentId"])
 	if err != nil {
-		h.logger.Warn("Invalid assessment ID format", zap.String("assessment_id", assessmentIDStr))
-		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   "bad_request",
-			"message": "Invalid assessment ID format",
-		})
+		h.writeError(w, http.StatusBadRequest, "bad_request", "Invalid assessment ID format")
 		return
 	}
 
 	assessment, err := h.repo.GetAssessmentByID(ctx, assessmentID)
 	if err != nil {
-		h.logger.Error("Failed to get assessment", zap.Error(err))
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   "internal_error",
-			"message": "Failed to retrieve assessment",
-		})
+		h.logger.Error("get assessment failed", zap.Error(err))
+		h.writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve assessment")
 		return
 	}
 
 	if assessment == nil {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   "not_found",
-			"message": "Assessment not found",
-		})
+		h.writeError(w, http.StatusNotFound, "not_found", "Assessment not found")
 		return
 	}
 
@@ -175,105 +227,33 @@ func (h *AssessmentHandler) GetAssessment(w http.ResponseWriter, r *http.Request
 	json.NewEncoder(w).Encode(h.modelToResponse(assessment))
 }
 
-// evaluateSignals evaluates available signals and returns reason codes
-func (h *AssessmentHandler) evaluateSignals(signals models.SignalsData) []string {
-	var reasons []string
-
-	// Phase 1: Simple stub logic
-	// In Phase 2, this calls real signal providers
-
-	if signals.EmailVerified {
-		reasons = append(reasons, models.ReasonCodeEmailVerified)
-	} else {
-		reasons = append(reasons, models.ReasonCodeEmailNotVerified)
+func (h *AssessmentHandler) modelToResponse(a *models.Assessment) models.AssessmentResponse {
+	return models.AssessmentResponse{
+		ContractVersion: a.ContractVersion,
+		AssessmentID:    a.AssessmentID.String(),
+		Status:          a.Status,
+		TrustTier:       a.TrustTier,
+		RiskBand:        a.RiskBand,
+		RiskScore:       a.RiskScore,
+		Decision:        a.Decision,
+		ReasonCodes:     a.ReasonCodes,
+		RequiredActions: a.RequiredActions,
+		PolicyVersion:   a.PolicyVersion,
+		CompletedAt:     a.CompletedAt,
 	}
-
-	if signals.PhoneVerified {
-		reasons = append(reasons, models.ReasonCodePhoneVerified)
-	} else {
-		reasons = append(reasons, models.ReasonCodePhoneNotVerified)
-	}
-
-	if signals.DeviceToken == "" {
-		reasons = append(reasons, models.ReasonCodeDeviceFirstSeen)
-	}
-
-	if signals.ImageHash == "" {
-		reasons = append(reasons, models.ReasonCodeImageHashNew)
-	}
-
-	return reasons
 }
 
-// decideOutcome determines trust tier, risk band, and risk score from reason codes
-func (h *AssessmentHandler) decideOutcome(reasonCodes []string) (string, string, int) {
-	// Phase 1: Simple heuristic
-	// In Phase 2+, this becomes a policy engine
-
-	var score int
-	var tier string
-	var band string
-
-	// Default
-	score = 50
-	tier = models.TrustTierProvisional
-	band = models.RiskBandUnknown
-
-	// Check for verification signals
-	emailVerified := contains(reasonCodes, models.ReasonCodeEmailVerified)
-	phoneVerified := contains(reasonCodes, models.ReasonCodePhoneVerified)
-
-	if emailVerified && phoneVerified {
-		score = 20
-		tier = models.TrustTierStandard
-		band = models.RiskBandLow
-	} else if emailVerified {
-		score = 40
-		tier = models.TrustTierProvisional
-		band = models.RiskBandLow
-	}
-
-	return tier, band, score
+func (h *AssessmentHandler) writeError(w http.ResponseWriter, status int, code, message string) {
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error":   code,
+		"message": message,
+	})
 }
 
-// modelToResponse converts an Assessment model to a response
-func (h *AssessmentHandler) modelToResponse(assessment *models.Assessment) models.AssessmentResponse {
-	resp := models.AssessmentResponse{
-		ContractVersion: assessment.ContractVersion,
-		AssessmentID:    assessment.AssessmentID.String(),
-		Status:          assessment.Status,
-		TrustTier:       assessment.TrustTier,
-		RiskBand:        assessment.RiskBand,
-		RiskScore:       assessment.RiskScore,
-		ReasonCodes:     assessment.ReasonCodes,
-		PolicyVersion:   assessment.PolicyVersion,
-		CompletedAt:     assessment.CompletedAt,
+func statusFromError(err error) string {
+	if err != nil {
+		return "error"
 	}
-
-	// Determine required actions based on tier
-	if assessment.TrustTier == models.TrustTierProvisional {
-		resp.RequiredActions = append(resp.RequiredActions, models.RequiredActionVerifyEmail)
-		resp.RequiredActions = append(resp.RequiredActions, models.RequiredActionVerifyPhone)
-	}
-
-	if assessment.TrustTier == models.TrustTierLimited {
-		resp.RequiredActions = append(resp.RequiredActions, models.RequiredActionReviewByHuman)
-	}
-
-	resp.Signals = models.SignalsProcessed{
-		Processed: []string{}, // Phase 1: stub
-		Skipped:   []string{},
-	}
-
-	return resp
-}
-
-// contains checks if a slice contains a string
-func contains(slice []string, str string) bool {
-	for _, s := range slice {
-		if s == str {
-			return true
-		}
-	}
-	return false
+	return "ok"
 }

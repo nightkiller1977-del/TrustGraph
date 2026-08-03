@@ -1,4 +1,5 @@
 -- Phase 1: Initial schema with Plane A (first-party signals) support
+-- Database: trustgraph (created in ConnectionSphere's PostgreSQL 17 instance)
 
 -- Subject table (maps to ConnectionSphere user)
 CREATE TABLE IF NOT EXISTS subject (
@@ -6,22 +7,24 @@ CREATE TABLE IF NOT EXISTS subject (
     connection_sphere_user_id VARCHAR(255) UNIQUE NOT NULL,
     external_id_verified BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT now(),
-    deleted_at TIMESTAMPTZ,
-    INDEX idx_subject_cs_user (connection_sphere_user_id)
+    deleted_at TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS idx_subject_cs_user ON subject(connection_sphere_user_id);
 
 -- Assessment table (trust decision)
 CREATE TABLE IF NOT EXISTS assessment (
     assessment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     contract_version VARCHAR(10) NOT NULL,
-    idempotency_key VARCHAR(255) UNIQUE NOT NULL,
+    idempotency_key VARCHAR(255) NOT NULL,
     subject_id UUID NOT NULL REFERENCES subject(subject_id),
     assessment_type VARCHAR(50),
     trust_tier VARCHAR(50) DEFAULT 'provisional',
     risk_band VARCHAR(50),
-    risk_score INTEGER CHECK (risk_score >= 0 AND risk_score <= 100),
+    risk_score INTEGER,
     decision VARCHAR(50),
     reason_codes TEXT[],
+    required_actions TEXT[],
     policy_version VARCHAR(50),
     status VARCHAR(50) DEFAULT 'pending',
     created_at TIMESTAMPTZ DEFAULT now(),
@@ -31,6 +34,8 @@ CREATE TABLE IF NOT EXISTS assessment (
 );
 
 CREATE INDEX idx_assessment_subject ON assessment(subject_id);
+CREATE UNIQUE INDEX idx_assessment_idempotency_active ON assessment(idempotency_key)
+    WHERE created_at > now() - interval '24 hours';
 CREATE INDEX idx_assessment_idempotency ON assessment(idempotency_key);
 CREATE INDEX idx_assessment_created ON assessment(created_at DESC);
 

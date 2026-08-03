@@ -39,18 +39,18 @@ type RequestContext struct {
 	CorrelationID string `json:"correlationId,omitempty"`
 }
 
-// AssessmentResponse is the result of a trust assessment
 type AssessmentResponse struct {
-	ContractVersion string         `json:"contractVersion"`
-	AssessmentID    string         `json:"assessmentId"`
-	Status          string         `json:"status"` // pending, complete, error, deferred
-	TrustTier       string         `json:"trustTier"`
-	RequiredActions []string       `json:"requiredActions"`
-	RiskBand        string         `json:"riskBand"`
-	RiskScore       int            `json:"riskScore"`
-	ReasonCodes     []string       `json:"reasonCodes"`
-	PolicyVersion   string         `json:"policyVersion"`
-	CompletedAt     *time.Time     `json:"completedAt,omitempty"`
+	ContractVersion string           `json:"contractVersion"`
+	AssessmentID    string           `json:"assessmentId"`
+	Status          string           `json:"status"`
+	TrustTier       string           `json:"trustTier"`
+	RiskBand        string           `json:"riskBand"`
+	RiskScore       int              `json:"riskScore"`
+	Decision        string           `json:"decision"`
+	ReasonCodes     []string         `json:"reasonCodes"`
+	RequiredActions []string         `json:"requiredActions"`
+	PolicyVersion   string           `json:"policyVersion"`
+	CompletedAt     *time.Time       `json:"completedAt,omitempty"`
 	Signals         SignalsProcessed `json:"signals,omitempty"`
 }
 
@@ -72,6 +72,7 @@ type Assessment struct {
 	RiskScore         int
 	Decision          string
 	ReasonCodes       []string
+	RequiredActions   []string
 	PolicyVersion     string
 	Status            string
 	CreatedAt         time.Time

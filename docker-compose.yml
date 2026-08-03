@@ -1,26 +1,4 @@
-version: '3.8'
-
 services:
-  postgres:
-    image: postgres:17-alpine
-    container_name: trustgraph-postgres
-    environment:
-      POSTGRES_USER: trustgraph
-      POSTGRES_PASSWORD: trustgraph_dev_password
-      POSTGRES_DB: trustgraph
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U trustgraph"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - trustgraph
-
   api:
     build:
       context: .
@@ -29,19 +7,33 @@ services:
     environment:
       TRUSTGRAPH_PORT: "8080"
       TRUSTGRAPH_ENVIRONMENT: "development"
-      TRUSTGRAPH_DATABASE_URL: "postgres://trustgraph:trustgraph_dev_password@postgres:5432/trustgraph"
+      TRUSTGRAPH_DATABASE_URL: "postgres://connectsphere:connectsphere_dev_password@connectsphere-postgres:5432/trustgraph?sslmode=disable"
       TRUSTGRAPH_LOG_LEVEL: "debug"
     ports:
-      - "8080:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - "8081:8080"
     networks:
-      - trustgraph
+      - connectionsphere_default
+    depends_on:
+      trustgraph-db-init:
+        condition: service_completed_successfully
 
-volumes:
-  postgres_data:
+  trustgraph-db-init:
+    image: postgres:17-alpine
+    container_name: trustgraph-db-init
+    environment:
+      PGHOST: connectsphere-postgres
+      PGUSER: connectsphere
+      PGPASSWORD: connectsphere_dev_password
+    entrypoint: >
+      sh -c '
+        until pg_isready -h connectsphere-postgres -U connectsphere; do sleep 1; done
+        psql -h connectsphere-postgres -U connectsphere -tc "SELECT 1 FROM pg_database WHERE datname = '"'"'trustgraph'"'"'" | grep -q 1 ||
+          psql -h connectsphere-postgres -U connectsphere -c "CREATE DATABASE trustgraph"
+        echo "trustgraph database ready"
+      '
+    networks:
+      - connectionsphere_default
 
 networks:
-  trustgraph:
-    driver: bridge
+  connectionsphere_default:
+    external: true

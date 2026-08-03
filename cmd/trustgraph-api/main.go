@@ -62,7 +62,7 @@ func main() {
 	logger.Info("Migrations completed successfully")
 
 	// Initialize API server
-	router := api.NewRouter(db, logger)
+	router := api.NewRouter(db, logger, &cfg)
 
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
