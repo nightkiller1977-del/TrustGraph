@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: trustgraph-postgres
+    environment:
+      POSTGRES_USER: trustgraph
+      POSTGRES_PASSWORD: trustgraph_dev_password
+      POSTGRES_DB: trustgraph
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trustgraph"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trustgraph
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: trustgraph-api
+    environment:
+      TRUSTGRAPH_PORT: "8080"
+      TRUSTGRAPH_ENVIRONMENT: "development"
+      TRUSTGRAPH_DATABASE_URL: "postgres://trustgraph:trustgraph_dev_password@postgres:5432/trustgraph"
+      TRUSTGRAPH_LOG_LEVEL: "debug"
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - trustgraph
+
+volumes:
+  postgres_data:
+
+networks:
+  trustgraph:
+    driver: bridge
