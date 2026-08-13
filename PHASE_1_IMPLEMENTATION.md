@@ -832,7 +832,7 @@ services:
     container_name: trustgraph-postgres
     environment:
       POSTGRES_USER: trustgraph
-      POSTGRES_PASSWORD: trustgraph_dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-your_secure_password}
       POSTGRES_DB: trustgraph
     ports:
       - "5432:5432"
@@ -851,9 +851,9 @@ services:
       dockerfile: Dockerfile
     container_name: trustgraph-api
     environment:
-      POSTGRES_URL: postgres://trustgraph:trustgraph_dev_password@postgres:5432/trustgraph
-      PORT: 8080
-      LOG_LEVEL: debug
+      TRUSTGRAPH_DATABASE_URL: postgres://trustgraph:${POSTGRES_PASSWORD:-your_secure_password}@postgres:5432/trustgraph
+      TRUSTGRAPH_PORT: 8080
+      TRUSTGRAPH_LOG_LEVEL: debug
     ports:
       - "8080:8080"
     depends_on:

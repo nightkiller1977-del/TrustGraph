@@ -212,3 +212,55 @@ make down    # Stop
 - [PHASE_1_IMPLEMENTATION.md](./PHASE_1_IMPLEMENTATION.md) — Full technical design
 - [OpenAPI spec](./api/trustgraph.openapi.yaml) — API contract
 - [ColdFusion Integration](./docs/COLDFUSION_INTEGRATION.md) — ConnectionSphere caller guide
+
+## Security Guidelines
+
+### Before Contributing
+
+1. **Never commit secrets.** All credentials (passwords, tokens, API keys) must come from environment variables or `.env` files (which are gitignored).
+2. **Use `.env.example` as a template only.** All values should be placeholders like `your_password`, not real credentials.
+3. **Always use parameterized queries.** Never concatenate user input into SQL.
+4. **Validate all inputs.** All external data (API requests, form inputs) must be validated before processing.
+5. **Log carefully.** Never log sensitive data (passwords, tokens, PII). Use audit logging for compliance.
+
+### Testing Security Changes
+
+```bash
+# Check for hardcoded credentials (should return nothing)
+grep -r "password\|secret\|token" --include="*.go" . | grep -v "Password string\|TOKEN\|Token"
+
+# Run tests with race detector
+make test-race
+
+# Check dependency vulnerabilities
+go mod audit
+```
+
+### Database Security
+
+- All database connections use parameterized queries via `lib/pq`.
+- Connection pooling prevents resource exhaustion.
+- Audit logging captures all data access.
+- Production deployments must use `sslmode=require` for PostgreSQL.
+
+### Audit Logging
+
+Every assessment, consent change, and investigator action is immutably logged:
+
+```go
+audit.LogEvent(ctx, &audit.Event{
+  Plane: "A",
+  Action: "assessment_created",
+  Actor: "service:trustgraph",
+  ResourceType: "assessment",
+  ResourceID: assessmentID,
+  SubjectID: subjectID,
+  Result: "success",
+})
+```
+
+See [`internal/audit/events.go`](./internal/audit/events.go) for all event types.
+
+### Reporting Security Issues
+
+Do **not** open a public GitHub issue for security vulnerabilities. Instead, email security details to the maintainers. See [SECURITY.md](./SECURITY.md) for the full disclosure policy.
