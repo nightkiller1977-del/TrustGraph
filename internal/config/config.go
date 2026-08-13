@@ -4,7 +4,7 @@ type Config struct {
 	Port        string `envconfig:"PORT" default:"8080"`
 	Environment string `envconfig:"ENVIRONMENT" default:"development"`
 
-	DatabaseURL string `envconfig:"DATABASE_URL" default:"postgres://connectsphere:connectsphere_dev_password@localhost:5432/trustgraph?sslmode=disable"`
+	DatabaseURL string `envconfig:"DATABASE_URL" default:""`
 
 	AssessmentTimeoutMS int `envconfig:"ASSESSMENT_TIMEOUT_MS" default:"300"`
 
