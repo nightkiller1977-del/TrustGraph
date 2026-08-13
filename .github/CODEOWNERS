@@ -1,0 +1,20 @@
+# Security-sensitive files require review
+
+# All security and configuration files
+SECURITY.md @nightkiller1977-del
+.env.example @nightkiller1977-del
+.gitignore @nightkiller1977-del
+Dockerfile @nightkiller1977-del
+docker-compose.yml @nightkiller1977-del
+
+# Config and migrations
+internal/config/ @nightkiller1977-del
+migrations/ @nightkiller1977-del
+
+# Audit and authentication
+internal/audit/ @nightkiller1977-del
+internal/api/middleware.go @nightkiller1977-del
+
+# Documentation
+PHASE_1_IMPLEMENTATION.md @nightkiller1977-del
+*.md @nightkiller1977-del

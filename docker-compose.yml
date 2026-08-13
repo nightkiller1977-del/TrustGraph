@@ -5,10 +5,10 @@ services:
       dockerfile: Dockerfile
     container_name: trustgraph-api
     environment:
-      TRUSTGRAPH_PORT: "8080"
-      TRUSTGRAPH_ENVIRONMENT: "development"
-      TRUSTGRAPH_DATABASE_URL: "postgres://connectsphere:connectsphere_dev_password@connectsphere-postgres:5432/trustgraph?sslmode=disable"
-      TRUSTGRAPH_LOG_LEVEL: "debug"
+      TRUSTGRAPH_PORT: "${TRUSTGRAPH_PORT:-8080}"
+      TRUSTGRAPH_ENVIRONMENT: "${TRUSTGRAPH_ENVIRONMENT:-development}"
+      TRUSTGRAPH_DATABASE_URL: "${TRUSTGRAPH_DATABASE_URL}"
+      TRUSTGRAPH_LOG_LEVEL: "${TRUSTGRAPH_LOG_LEVEL:-info}"
     ports:
       - "8081:8080"
     networks:
@@ -21,9 +21,9 @@ services:
     image: postgres:17-alpine
     container_name: trustgraph-db-init
     environment:
-      PGHOST: connectsphere-postgres
-      PGUSER: connectsphere
-      PGPASSWORD: connectsphere_dev_password
+      PGHOST: "${PGHOST:-connectsphere-postgres}"
+      PGUSER: "${PGUSER}"
+      PGPASSWORD: "${PGPASSWORD}"
     entrypoint: >
       sh -c '
         until pg_isready -h connectsphere-postgres -U connectsphere; do sleep 1; done

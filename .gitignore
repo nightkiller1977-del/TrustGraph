@@ -16,9 +16,11 @@ trustgraph
 .DS_Store
 Thumbs.db
 
-# Environment
+# Environment (NEVER commit these)
 .env
 .env.local
+.env.*.local
+.env.production.local
 
 # Dependencies
 vendor/
@@ -30,3 +32,19 @@ coverage.txt
 # Build artifacts
 dist/
 build/
+
+# Secrets and credentials (never commit)
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.yaml
+secrets.yml
+credentials.json
+aws_credentials
+.aws/
+.kube/
+
+# Sensitive local files
+config.local.json
+docker-compose.override.yml
