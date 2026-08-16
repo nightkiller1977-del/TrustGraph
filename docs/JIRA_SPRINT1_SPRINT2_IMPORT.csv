@@ -1,0 +1,412 @@
+Project Key,Issue Type,Epic Link,Parent Issue Key,Summary,Description,Story Points,Priority,Labels,Components,Assignee,Reporter,Due Date,Status,Sprint,Environment,Custom field (Target Start Date),Custom field (Target End Date)
+KAN,Epic,,KAN-PLANE-B,"Plane B - Consented Verification (Phase 1)","Implement LinkedIn OAuth, Government ID, Liveness, and Image verification for user-initiated trust signals. Timeline: 7 weeks (Weeks 9-15)",0,High,"ai-commander-ready, plane-b, phase-1",Plane B,,Anthony Larkins,2025-03-31,Ready for AI Commander,"Sprint 1-4",development,2025-03-10,2025-04-25
+KAN,Feature,KAN-PLANE-B,,Sprint 1: LinkedIn OAuth Integration,"Sprint 1 Feature: Implement LinkedIn OAuth 2.0 flow with employment and education data extraction. Timeline: Weeks 9-10",0,High,"ai-commander-ready, sprint-1, linkedin, plane-b",Plane B,,Anthony Larkins,2025-03-16,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-16
+
+KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-001: LinkedIn OAuth Flow Setup","Implement OAuth 2.0 flow for LinkedIn sign-in, capturing employment and education data.
+
+## Acceptance Criteria
+- LinkedIn app created and configured
+- OAuth callback handler implemented
+- Access token stored securely
+- Consent screen shows what data is requested
+- Error handling for rejected permissions
+- Can refresh expired tokens
+
+## Implementation Details
+File: internal/api/oauth_handler.go
+
+## Subtasks
+- Design OAuth callback handler
+- Implement LinkedIn scopes (profile, email, public_profile)
+- Add token storage to database
+- Create UI flow for ""Link LinkedIn"" button
+- Add error handling for permission denial
+
+## Definition of Done
+- Code reviewed and approved
+- Unit tests pass (>80% coverage)
+- Integrated with CI/CD pipeline
+- Documentation updated in code comments
+- Ready for QA testing",8,High,"ai-commander-ready, sprint-1, linkedin, oauth",Plane B,"[Engineer A]",Anthony Larkins,2025-03-15,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-15
+
+KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-002: LinkedIn Data Extraction & Storage","Extract employment and education data from LinkedIn OAuth response. Store in database.
+
+## Acceptance Criteria
+- Parse LinkedIn profile API response
+- Extract job history, titles, companies, dates
+- Extract education, schools, degrees, years
+- Store in subject_employment table
+- Store in subject_education table
+- Handle missing/incomplete data gracefully
+
+## Data Model
+```go
+type LinkedInProfile struct {
+    ID          string
+    Email       string
+    FirstName   string
+    LastName    string
+    Employment  []LinkedInJob
+    Education   []LinkedInEducation
+}
+```
+
+## Implementation Details
+Files:
+- internal/models/linkedin.go (new)
+- internal/store/linkedin_repo.go (new)
+- migrations/003_linkedin_integration.sql (new)
+
+## Database Changes
+- subject_employment table: company, title, start_date, end_date, is_current
+- Update subject_education table with source tracking
+
+## Definition of Done
+- All fields extracted and validated
+- Database schema created and migrated
+- Error handling for malformed data
+- Unit tests for data parsing
+- Integration tests with real LinkedIn responses",5,High,"ai-commander-ready, sprint-1, linkedin, data-model",Plane B,"[Engineer A]",Anthony Larkins,2025-03-13,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-13
+
+KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-003: Employment Validator (Free Validation)","Build free employment validation (similar to education validator).
+
+## Validation Signals
+1. Timeline Plausibility (20 points) - employment start before current job ends
+2. Company Existence (30 points) - check if company is known
+3. Job-Career Alignment (25 points) - match job title to education field
+4. Employment Tenure (15 points) - longer employment = more trustworthy
+5. Verification Status (10 points) - explicitly verified
+
+## Acceptance Criteria
+- Validate employment timeline
+- Check company existence (basic)
+- Match job title to career field
+- Weight by tenure
+- Generate confidence score (0-100)
+- Identify verified vs. self-reported
+- Write 20+ unit tests
+
+## Implementation Details
+Files:
+- internal/verification/employment_validator.go (new)
+- internal/verification/employment_validator_test.go (new)
+
+## Confidence Scoring
+- 0-50: Self-reported (no verification)
+- 50-70: Partial verification
+- 70-100: Verified
+
+## Definition of Done
+- All 5 validation signals implemented
+- Unit tests >90% coverage
+- Confidence score algorithm validated
+- Performance <1ms per profile
+- Code reviewed and approved",5,High,"ai-commander-ready, sprint-1, linkedin, validation, free-validation",Plane B,"[Engineer A]",Anthony Larkins,2025-03-15,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-15
+
+KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-004: Employment Signal Provider","Create employment signal for assessment pipeline. Contribute to risk scoring.
+
+## Acceptance Criteria
+- Implement EmploymentProvider signal
+- Calculate score from employment confidence
+- Generate reason codes:
+  - EMPLOYMENT_VERIFIED
+  - EMPLOYMENT_DURATION_ESTABLISHED
+  - EMPLOYMENT_ALIGNED_WITH_EDUCATION
+  - EMPLOYMENT_COMPANY_KNOWN
+- Integrate with policy engine
+- Score range: 0-30 points
+
+## Implementation Details
+Files:
+- internal/signals/employment_plane_b.go (new)
+
+## Integration Points
+- Add to internal/signals/evaluator.go
+- Register with AssessmentHandler
+- Update policy engine weights
+- Add reason codes to models/assessment.go
+
+## Testing
+- Unit tests for signal scoring
+- Integration tests with assessments
+- Edge cases: missing data, incomplete profiles
+
+## Definition of Done
+- Signal integrated into assessment pipeline
+- Contributes correctly to risk scoring
+- Tests pass (>80% coverage)
+- No performance impact on assessments
+- Ready for Sprint 1 testing",3,High,"ai-commander-ready, sprint-1, linkedin, signals",Plane B,"[Engineer A]",Anthony Larkins,2025-03-15,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-15
+
+KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-005: LinkedIn Integration Testing","E2E testing of LinkedIn OAuth flow with real profiles.
+
+## Acceptance Criteria
+- Test OAuth callback with real LinkedIn account
+- Verify all employment data extracted correctly
+- Test with incomplete profiles (missing jobs, education)
+- Test with old job history (10+ years back)
+- Verify data stored correctly in database
+- Test permission denial flow
+- Test token refresh
+- Load test with 1000 profiles
+
+## Test Scenarios
+1. Happy Path: Full LinkedIn profile with complete data
+2. Incomplete Profile: Missing jobs, education, or other fields
+3. Very Old Profile: Jobs from 20+ years ago
+4. Permission Denied: User rejects OAuth permissions
+5. Token Refresh: Access token expires and needs refresh
+6. Multiple Attempts: User re-authorizes multiple times
+7. Load: 1000 concurrent OAuth callbacks
+
+## Test Environment
+- LinkedIn dev sandbox account
+- Test data set: 50 real and synthetic profiles
+- Load testing tools: k6 or Apache JMeter
+
+## Definition of Done
+- All 7 scenarios tested and passing
+- No errors in production logs
+- Performance <500ms per OAuth callback
+- Database transactions verified correct
+- Ready for production deployment",5,High,"ai-commander-ready, sprint-1, linkedin, testing, qa",Plane B,"[Engineer B]",Anthony Larkins,2025-03-16,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-16
+
+KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-006: LinkedIn Badges & UI","Render employment verification badges on user profile.
+
+## Acceptance Criteria
+- Show ""✅ Google"" badge if verified
+- Show ""📼 Google"" badge if self-reported
+- Display job title and tenure
+- Link to LinkedIn profile (optional)
+- Render on both mobile and web
+- Show to other users (verified status)
+
+## UI Components
+1. Employment Badge Component
+   - Compact badge: ""✅ Google""
+   - Full card: Job title + tenure + verified status
+   - Hover tooltip: Verification date + method
+
+2. Profile Employment Section
+   - Employment history timeline
+   - Multiple jobs displayed
+   - Verification badges per job
+   - Privacy controls
+
+3. Responsive Design
+   - Desktop (1200px+): Full card layout
+   - Tablet (768-1199px): Compact card
+   - Mobile (<768px): Minimal badge only
+
+## Privacy Controls
+- User can hide employment
+- User can delete employment data
+- User can update employment
+
+## Implementation Details
+Files:
+- Frontend: components/EmploymentBadge.tsx (or .jsx)
+- Frontend: pages/ProfileEmployment.tsx (or .jsx)
+- Backend: Already covered in KAN-LI-002, KAN-LI-003, KAN-LI-004
+
+## Definition of Done
+- All UI components implemented
+- Responsive design tested (desktop, tablet, mobile)
+- Accessibility requirements met (WCAG 2.1 AA)
+- Performance: <100ms render time
+- QA tested across browsers
+- Screenshots in PR for review",5,High,"ai-commander-ready, sprint-1, linkedin, ui, frontend",Plane B,"[Engineer B]",Anthony Larkins,2025-03-16,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-16
+
+KAN,Feature,KAN-PLANE-B,,Sprint 2: Government ID Verification + Age Gate,"Sprint 2 Feature: Integrate Persona API for government ID verification and enforce age gate. Timeline: Weeks 11-12",0,Critical,"ai-commander-ready, sprint-2, government-id, plane-b",Plane B,,Anthony Larkins,2025-03-30,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-30
+
+KAN,Story,KAN-PLANE-B,KAN-ID-FEAT-2,"KAN-ID-001: Persona API Integration","Integrate Persona API for government ID verification and age gate.
+
+Vendor: Persona ($2.99/verification)
+Docs: https://docs.persona.com/
+
+## Acceptance Criteria
+- Persona account created and API key configured
+- Document upload flow implemented
+- Selfie/liveness verification works
+- Age extracted from ID (DOB)
+- Verified name stored securely
+- Vendor response logged (PII stripped)
+- Error handling for failed verifications
+- Cost tracking per user
+- Rate limiting implemented
+- Retry logic for transient failures
+
+## Implementation Details
+Files:
+- internal/verification/id_verifier.go (new)
+- internal/models/government_id.go (new)
+- migrations/004_id_verification.sql (new)
+
+## Data Model
+```go
+type GovernmentIDVerification struct {
+    ID              uuid.UUID
+    SubjectID       uuid.UUID
+    VerificationType string // ""drivers_license"", ""passport"", etc
+    VerifiedName    string
+    DateOfBirth     time.Time
+    Address         Address
+    ExpirationDate  *time.Time
+    VendorResponse  map[string]interface{} // Masked PII
+    Status          string // ""pending"", ""verified"", ""failed""
+    ErrorMessage    *string
+    Cost            decimal.Decimal // Vendor cost
+    VerifiedAt      *time.Time
+    CreatedAt       time.Time
+}
+```
+
+## Persona Integration
+- Request timeout: 30 seconds
+- Retry on 429/5xx: exponential backoff
+- Store inquiry_id from Persona
+- Validate response signatures
+- Secure PII in transit (TLS 1.3)
+- Never log full PII
+
+## Testing
+- Unit tests with Persona mock responses
+- Integration tests with Persona sandbox
+- Error scenarios: expired ID, fake ID, network timeout
+- Performance: <2s end-to-end latency
+
+## Definition of Done
+- All Persona API endpoints working
+- Security review passed
+- PII handling verified secure
+- Unit tests >90% coverage
+- Ready for age gate integration",8,Critical,"ai-commander-ready, sprint-2, government-id, vendor, critical",Plane B,"[Engineer B]",Anthony Larkins,2025-03-29,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-29
+
+KAN,Story,KAN-PLANE-B,KAN-ID-FEAT-2,"KAN-ID-002: Age Gate Implementation","Enforce age gate in assessment. Block users under 18. CRITICAL for dating app compliance.
+
+## Acceptance Criteria
+- Check DOB from government ID verification
+- Calculate age at assessment time
+- Block assessment if age < 18
+- Return specific error code (UNDERAGE_USER)
+- Log underage attempts with timestamp
+- Alert admin to potential child protection issue
+- Prevent account creation for users under 18
+
+## Compliance Requirements
+- COPPA (Children's Online Privacy Protection Act)
+- Dating app industry standard (18+ only)
+- Audit trail of all age gate denials
+- Automatic reporting to admin dashboard
+
+## Implementation Details
+Files:
+- internal/policy/age_gate.go (new)
+
+## Age Calculation
+- Use ID verification DOB as source of truth
+- Calculate age as: today - DOB (in years)
+- Timezone-aware calculation
+- Account for leap years
+
+## Blocking Behavior
+- Return HTTP 403 Forbidden
+- Error code: ""UNDERAGE_USER""
+- Error message: ""You must be 18+ to use this service""
+- No account creation allowed
+- No further processing
+
+## Alerting
+- Alert type: ""CHILD_PROTECTION_ISSUE""
+- Alert to: admin@trustgraph.local
+- Include: Subject ID, DOB, Timestamp, IP address
+- Escalation: Manual review within 1 hour
+
+## Audit Trail
+- All age gate checks logged
+- Passed and failed attempts logged
+- Queryable for compliance reports
+- Retention: 7 years (industry standard)
+
+## Testing
+- Unit tests: various DOBs
+- Boundary test: exactly 18 years old
+- Integration test: assessment flow
+- Compliance test: audit trail generation
+
+## Definition of Done
+- Age gate enforces 18+ requirement
+- Alerts working and tested
+- Audit trail comprehensive
+- Zero false positives
+- Legal review passed
+- Ready for launch",3,Critical,"ai-commander-ready, sprint-2, government-id, age-gate, critical, compliance",Plane B,"[Engineer A]",Anthony Larkins,2025-03-27,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-27
+
+KAN,Story,KAN-PLANE-B,KAN-ID-FEAT-2,"KAN-ID-003: Government ID Testing","Test ID verification with real documents (test accounts from Persona).
+
+## Acceptance Criteria
+- Test with valid driver's license
+- Test with valid passport
+- Test with expired ID (should fail)
+- Test with fake ID (should fail)
+- Verify age extraction accurate
+- Test age gate blocking minors
+- Verify vendor cost tracking
+- Load test with 500 ID verifications
+
+## Test Scenarios
+1. Valid US Driver License
+   - Expected: Success, verified
+   - Check: Name, DOB, expiration extracted correctly
+
+2. Valid US Passport
+   - Expected: Success, verified
+   - Check: Name, DOB extracted correctly
+
+3. Expired License
+   - Expected: Failure, rejected
+   - Check: Error message mentions expiration
+
+4. Fake ID (Persona test doc)
+   - Expected: Failure, rejected
+   - Check: Fraud detection triggered
+
+5. Age Boundary Tests
+   - 18 years old: Allowed
+   - 17 years 11 months: Blocked
+   - Under 18: Blocked with alert
+
+6. Multiple Attempts
+   - Same user, different IDs
+   - Subsequent attempt should update
+
+7. Load Test (500 concurrent)
+   - 500 IDs verified in parallel
+   - Vendor rate limits respected
+   - No timeouts or failures
+   - Cost tracking accurate
+
+## Test Data
+- Use Persona's sandbox test documents
+- Create synthetic profiles for load testing
+- Mix of valid/invalid/expired IDs
+
+## Test Environment
+- Persona sandbox (not production)
+- Test database (separate from production)
+- Load testing tools: k6 or Apache JMeter
+
+## Success Criteria
+- All 7 scenarios passing
+- Age extraction 100% accurate
+- Cost tracking within 1% of actual vendor charges
+- Load test: 500 IDs in <60 seconds
+- No data loss or corruption
+- Ready for production deployment
+
+## Definition of Done
+- All test scenarios documented
+- Test results attached to ticket
+- Performance benchmarks met
+- Security review passed
+- QA sign-off obtained",5,High,"ai-commander-ready, sprint-2, government-id, testing, qa",Plane B,"[Engineer B]",Anthony Larkins,2025-03-30,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-30
