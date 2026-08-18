@@ -294,4 +294,24 @@ func TestEducationValidator_RecentGraduate(t *testing.T) {
 	if v.isRecentGraduate(oldGrad) {
 		t.Error("Should not identify old graduate (15 years ago)")
 	}
+
+	futureGrad := time.Now().AddDate(1, 0, 0)
+	if v.isRecentGraduate(futureGrad) {
+		t.Error("Should not identify a future graduation date as a recent graduate")
+	}
+}
+
+func TestEducationValidator_DegreeCareerAlignment_RequiresTermInBothFields(t *testing.T) {
+	v := NewEducationValidator()
+
+	// "data" appears twice in fieldOfStudy and zero times in the job title —
+	// the loose-match term must be required in EACH field separately, not
+	// just twice across the concatenated pair.
+	if v.degreeMatchesCareer("Data Science and Data Analytics", "Chef") {
+		t.Error("expected no alignment: 'data' appears twice in the field but not at all in the job title")
+	}
+
+	if !v.degreeMatchesCareer("Data Science", "Data Analyst") {
+		t.Error("expected alignment: 'data' appears in both fields")
+	}
 }

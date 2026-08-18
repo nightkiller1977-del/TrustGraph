@@ -250,12 +250,14 @@ func (v *EducationValidator) degreeMatchesCareer(fieldOfStudy, currentJobTitle s
 		}
 	}
 
-	// Loose match: both mention common terms
+	// Loose match: both mention common terms. Must check fieldLower and
+	// jobLower separately — counting occurrences in the concatenated
+	// string (fullText) passes a term that appears twice in ONE field and
+	// zero times in the other, e.g. field "Data Science and Data
+	// Analytics" + job "Chef" has "data" twice with no job-side match.
 	commonTerms := []string{"tech", "finance", "business", "data"}
-	fullText := fieldLower + " " + jobLower
 	for _, term := range commonTerms {
-		if strings.Count(fullText, term) >= 2 {
-			// Term appears at least twice (once in degree, once in job)
+		if strings.Contains(fieldLower, term) && strings.Contains(jobLower, term) {
 			return true
 		}
 	}
@@ -267,7 +269,11 @@ func (v *EducationValidator) degreeMatchesCareer(fieldOfStudy, currentJobTitle s
 func (v *EducationValidator) isRecentGraduate(endDate time.Time) bool {
 	now := time.Now()
 	tenYearsAgo := now.AddDate(-10, 0, 0)
-	return endDate.After(tenYearsAgo)
+	// A future end date fails validateTimeline (never plausible relative to
+	// account creation) but, without this upper bound, still passed here —
+	// any future date is trivially "after ten years ago" — awarding the
+	// 15-point signal for a graduation date that hasn't happened yet.
+	return endDate.After(tenYearsAgo) && !endDate.After(now)
 }
 
 // generateBadge creates the display badge text
