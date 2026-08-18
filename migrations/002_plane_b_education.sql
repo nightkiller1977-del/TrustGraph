@@ -9,7 +9,10 @@ CREATE TABLE IF NOT EXISTS subject_education (
     field_of_study VARCHAR(255),
     start_date TIMESTAMPTZ,
     end_date TIMESTAMPTZ,
-    grade VARCHAR(10),
+    -- The Go model exposes an unrestricted string (GPAs, but also
+    -- classifications like "First Class Honours" or "Summa Cum Laude"),
+    -- so this can't be bounded to short numeric-GPA-sized values.
+    grade TEXT,
 
     -- Validation results (from free validation logic)
     confidence_score INTEGER,  -- 0-100
