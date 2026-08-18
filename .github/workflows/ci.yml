@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build, vet, and test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # No services/Postgres block: this repo's DB-touching code is tested
+      # entirely against github.com/DATA-DOG/go-sqlmock rather than a real
+      # database. The real Postgres this service talks to in every other
+      # environment is a shared `connectsphere-postgres` container on the
+      # external `connectionsphere_default` Docker network (see
+      # docker-compose.yml) -- there is no self-contained way to stand that
+      # up as a GitHub Actions service, so sqlmock is the only DB dependency
+      # this workflow needs.
+      - name: Test (race)
+        run: go test ./... -race
