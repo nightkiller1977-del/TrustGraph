@@ -1,0 +1,394 @@
+{
+  "issues": [
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Epic"
+        },
+        "summary": "Plane B - Consented Verification (Phase 1)",
+        "description": "Implement LinkedIn OAuth, Government ID, Liveness, and Image verification for user-initiated trust signals. Timeline: 7 weeks (Weeks 9-15)",
+        "labels": ["ai-commander-ready", "plane-b", "phase-1"],
+        "priority": {
+          "name": "High"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "duedate": "2025-04-25",
+        "customfield_10000": "2025-03-10",
+        "customfield_10001": "2025-04-25",
+        "customfield_10002": "development"
+      },
+      "key": "TG-PLANE-B"
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Feature"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "Sprint 1: LinkedIn OAuth Integration",
+        "description": "Sprint 1 Feature: Implement LinkedIn OAuth 2.0 flow with employment and education data extraction. Timeline: Weeks 9-10",
+        "labels": ["ai-commander-ready", "sprint-1", "linkedin", "plane-b"],
+        "priority": {
+          "name": "High"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "duedate": "2025-03-16",
+        "customfield_10000": "2025-03-10",
+        "customfield_10001": "2025-03-16",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 1"
+      }
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Story"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "TG-LI-001: LinkedIn OAuth Flow Setup",
+        "description": "Implement OAuth 2.0 flow for LinkedIn sign-in, capturing employment and education data.\n\nh3. Acceptance Criteria\n- LinkedIn app created and configured\n- OAuth callback handler implemented\n- Access token stored securely\n- Consent screen shows what data is requested\n- Error handling for rejected permissions\n- Can refresh expired tokens\n\nh3. Implementation Details\nFile: internal/api/oauth_handler.go\n\nh3. Subtasks\n- Design OAuth callback handler\n- Implement LinkedIn scopes (profile, email, public_profile)\n- Add token storage to database\n- Create UI flow for 'Link LinkedIn' button\n- Add error handling for permission denial\n\nh3. Definition of Done\n- Code reviewed and approved\n- Unit tests pass (>80% coverage)\n- Integrated with CI/CD pipeline\n- Documentation updated in code comments\n- Ready for QA testing",
+        "labels": ["ai-commander-ready", "sprint-1", "linkedin", "oauth"],
+        "priority": {
+          "name": "High"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "customfield_10004": 8,
+        "duedate": "2025-03-15",
+        "customfield_10000": "2025-03-10",
+        "customfield_10001": "2025-03-15",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 1",
+        "assignee": {
+          "name": "placeholder_engineer_a"
+        }
+      },
+      "key": "TG-LI-001"
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Story"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "TG-LI-002: LinkedIn Data Extraction & Storage",
+        "description": "Extract employment and education data from LinkedIn OAuth response. Store in database.\n\nh3. Acceptance Criteria\n- Parse LinkedIn profile API response\n- Extract job history, titles, companies, dates\n- Extract education, schools, degrees, years\n- Store in subject_employment table\n- Store in subject_education table\n- Handle missing/incomplete data gracefully\n\nh3. Data Model\n{code:go}\ntype LinkedInProfile struct {\n    ID          string\n    Email       string\n    FirstName   string\n    LastName    string\n    Employment  []LinkedInJob\n    Education   []LinkedInEducation\n}\n{code}\n\nh3. Implementation Details\nFiles:\n- internal/models/linkedin.go (new)\n- internal/store/linkedin_repo.go (new)\n- migrations/003_linkedin_integration.sql (new)",
+        "labels": ["ai-commander-ready", "sprint-1", "linkedin", "data-model"],
+        "priority": {
+          "name": "High"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "customfield_10004": 5,
+        "duedate": "2025-03-13",
+        "customfield_10000": "2025-03-10",
+        "customfield_10001": "2025-03-13",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 1",
+        "assignee": {
+          "name": "placeholder_engineer_a"
+        }
+      },
+      "key": "TG-LI-002"
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Story"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "TG-LI-003: Employment Validator (Free Validation)",
+        "description": "Build free employment validation (similar to education validator).\n\nh3. Validation Signals\n1. Timeline Plausibility (20 points)\n2. Company Existence (30 points)\n3. Job-Career Alignment (25 points)\n4. Employment Tenure (15 points)\n5. Verification Status (10 points)\n\nh3. Acceptance Criteria\n- Validate employment timeline\n- Check company existence (basic)\n- Match job title to career field\n- Weight by tenure\n- Generate confidence score (0-100)\n- Identify verified vs. self-reported\n- Write 20+ unit tests\n\nh3. Files\n- internal/verification/employment_validator.go (new)\n- internal/verification/employment_validator_test.go (new)",
+        "labels": ["ai-commander-ready", "sprint-1", "linkedin", "validation", "free-validation"],
+        "priority": {
+          "name": "High"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "customfield_10004": 5,
+        "duedate": "2025-03-15",
+        "customfield_10000": "2025-03-10",
+        "customfield_10001": "2025-03-15",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 1",
+        "assignee": {
+          "name": "placeholder_engineer_a"
+        }
+      },
+      "key": "TG-LI-003"
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Story"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "TG-LI-004: Employment Signal Provider",
+        "description": "Create employment signal for assessment pipeline. Contribute to risk scoring.\n\nh3. Acceptance Criteria\n- Implement EmploymentProvider signal\n- Calculate score from employment confidence\n- Generate reason codes:\n  * EMPLOYMENT_VERIFIED\n  * EMPLOYMENT_DURATION_ESTABLISHED\n  * EMPLOYMENT_ALIGNED_WITH_EDUCATION\n- Integrate with policy engine\n- Score range: 0-30 points\n\nh3. Files\n- internal/signals/employment_plane_b.go (new)",
+        "labels": ["ai-commander-ready", "sprint-1", "linkedin", "signals"],
+        "priority": {
+          "name": "High"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "customfield_10004": 3,
+        "duedate": "2025-03-15",
+        "customfield_10000": "2025-03-10",
+        "customfield_10001": "2025-03-15",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 1",
+        "assignee": {
+          "name": "placeholder_engineer_a"
+        }
+      },
+      "key": "TG-LI-004"
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Story"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "TG-LI-005: LinkedIn Integration Testing",
+        "description": "E2E testing of LinkedIn OAuth flow with real profiles.\n\nh3. Acceptance Criteria\n- Test OAuth callback with real LinkedIn account\n- Verify all employment data extracted correctly\n- Test with incomplete profiles (missing jobs, education)\n- Test with old job history (10+ years back)\n- Verify data stored correctly in database\n- Test permission denial flow\n- Test token refresh\n- Load test with 1000 profiles\n\nh3. Test Scenarios\n1. Happy Path: Full LinkedIn profile with complete data\n2. Incomplete Profile: Missing jobs, education\n3. Very Old Profile: Jobs from 20+ years ago\n4. Permission Denied: User rejects OAuth permissions\n5. Token Refresh: Access token expires and needs refresh\n6. Multiple Attempts: User re-authorizes multiple times\n7. Load: 1000 concurrent OAuth callbacks",
+        "labels": ["ai-commander-ready", "sprint-1", "linkedin", "testing", "qa"],
+        "priority": {
+          "name": "High"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "customfield_10004": 5,
+        "duedate": "2025-03-16",
+        "customfield_10000": "2025-03-10",
+        "customfield_10001": "2025-03-16",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 1",
+        "assignee": {
+          "name": "placeholder_engineer_b"
+        }
+      },
+      "key": "TG-LI-005"
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Story"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "TG-LI-006: LinkedIn Badges & UI",
+        "description": "Render employment verification badges on user profile.\n\nh3. Acceptance Criteria\n- Show '✅ Google' badge if verified\n- Show '📼 Google' badge if self-reported\n- Display job title and tenure\n- Link to LinkedIn profile (optional)\n- Render on both mobile and web\n- Show to other users (verified status)\n\nh3. UI Components\n1. Employment Badge Component\n2. Profile Employment Section\n3. Responsive Design\n\nh3. Privacy Controls\n- User can hide employment\n- User can delete employment data\n- User can update employment",
+        "labels": ["ai-commander-ready", "sprint-1", "linkedin", "ui", "frontend"],
+        "priority": {
+          "name": "High"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "customfield_10004": 5,
+        "duedate": "2025-03-16",
+        "customfield_10000": "2025-03-10",
+        "customfield_10001": "2025-03-16",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 1",
+        "assignee": {
+          "name": "placeholder_engineer_b"
+        }
+      },
+      "key": "TG-LI-006"
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Feature"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "Sprint 2: Government ID Verification + Age Gate",
+        "description": "Sprint 2 Feature: Integrate Persona API for government ID verification and enforce age gate. Timeline: Weeks 11-12. CRITICAL: Age gate required for dating app compliance.",
+        "labels": ["ai-commander-ready", "sprint-2", "government-id", "plane-b", "critical"],
+        "priority": {
+          "name": "Critical"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "duedate": "2025-03-30",
+        "customfield_10000": "2025-03-24",
+        "customfield_10001": "2025-03-30",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 2"
+      }
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Story"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "TG-ID-001: Persona API Integration",
+        "description": "Integrate Persona API for government ID verification and age gate.\n\nVendor: Persona ($2.99/verification)\nDocs: https://docs.persona.com/\n\nh3. Acceptance Criteria\n- Persona account created and API key configured\n- Document upload flow implemented\n- Selfie/liveness verification works\n- Age extracted from ID (DOB)\n- Verified name stored securely\n- Vendor response logged (PII stripped)\n- Error handling for failed verifications\n- Cost tracking per user\n- Rate limiting implemented\n- Retry logic for transient failures\n\nh3. Files\n- internal/verification/id_verifier.go (new)\n- internal/models/government_id.go (new)\n- migrations/004_id_verification.sql (new)",
+        "labels": ["ai-commander-ready", "sprint-2", "government-id", "vendor", "critical"],
+        "priority": {
+          "name": "Critical"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "customfield_10004": 8,
+        "duedate": "2025-03-29",
+        "customfield_10000": "2025-03-24",
+        "customfield_10001": "2025-03-29",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 2",
+        "assignee": {
+          "name": "placeholder_engineer_b"
+        }
+      },
+      "key": "TG-ID-001"
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Story"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "TG-ID-002: Age Gate Implementation",
+        "description": "Enforce age gate in assessment. Block users under 18. CRITICAL for dating app compliance.\n\nh3. Acceptance Criteria\n- Check DOB from government ID verification\n- Calculate age at assessment time\n- Block assessment if age < 18\n- Return specific error code (UNDERAGE_USER)\n- Log underage attempts with timestamp\n- Alert admin to potential child protection issue\n- Prevent account creation for users under 18\n\nh3. Compliance Requirements\n- COPPA (Children's Online Privacy Protection Act)\n- Dating app industry standard (18+ only)\n- Audit trail of all age gate denials\n- Automatic reporting to admin dashboard\n\nh3. Files\n- internal/policy/age_gate.go (new)",
+        "labels": ["ai-commander-ready", "sprint-2", "government-id", "age-gate", "critical", "compliance"],
+        "priority": {
+          "name": "Critical"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "customfield_10004": 3,
+        "duedate": "2025-03-27",
+        "customfield_10000": "2025-03-24",
+        "customfield_10001": "2025-03-27",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 2",
+        "assignee": {
+          "name": "placeholder_engineer_a"
+        }
+      },
+      "key": "TG-ID-002"
+    },
+    {
+      "fields": {
+        "project": {
+          "key": "TG"
+        },
+        "issuetype": {
+          "name": "Story"
+        },
+        "parent": {
+          "key": "TG-PLANE-B"
+        },
+        "summary": "TG-ID-003: Government ID Testing",
+        "description": "Test ID verification with real documents (test accounts from Persona).\n\nh3. Acceptance Criteria\n- Test with valid driver's license\n- Test with valid passport\n- Test with expired ID (should fail)\n- Test with fake ID (should fail)\n- Verify age extraction accurate\n- Test age gate blocking minors\n- Verify vendor cost tracking\n- Load test with 500 ID verifications\n\nh3. Test Scenarios\n1. Valid US Driver License\n2. Valid US Passport\n3. Expired License\n4. Fake ID (Persona test doc)\n5. Age Boundary Tests\n6. Multiple Attempts\n7. Load Test (500 concurrent)",
+        "labels": ["ai-commander-ready", "sprint-2", "government-id", "testing", "qa"],
+        "priority": {
+          "name": "High"
+        },
+        "components": [
+          {
+            "name": "Plane B"
+          }
+        ],
+        "customfield_10004": 5,
+        "duedate": "2025-03-30",
+        "customfield_10000": "2025-03-24",
+        "customfield_10001": "2025-03-30",
+        "customfield_10002": "development",
+        "customfield_10003": "Sprint 2",
+        "assignee": {
+          "name": "placeholder_engineer_b"
+        }
+      },
+      "key": "TG-ID-003"
+    }
+  ]
+}
