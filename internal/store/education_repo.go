@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 // SubjectEducation represents education data stored for a subject
@@ -89,7 +90,7 @@ func (r *EducationRepository) SaveEducation(ctx context.Context, edu *SubjectEdu
 		edu.Grade,
 		edu.ConfidenceScore,
 		edu.IsVerified,
-		edu.ValidationSignals,
+		pq.Array(edu.ValidationSignals),
 		edu.ValidationDetails,
 		edu.ValidationRiskScore,
 		edu.Source,
@@ -120,6 +121,7 @@ func (r *EducationRepository) GetEducationBySubject(ctx context.Context, subject
 
 	var edu SubjectEducation
 	var sourceDataJSON []byte
+	var validationSignals pq.StringArray
 
 	err := r.db.QueryRowContext(ctx, query, subjectID).Scan(
 		&edu.EducationID,
@@ -131,7 +133,7 @@ func (r *EducationRepository) GetEducationBySubject(ctx context.Context, subject
 		&edu.Grade,
 		&edu.ConfidenceScore,
 		&edu.IsVerified,
-		&edu.ValidationSignals,
+		&validationSignals,
 		&edu.ValidationDetails,
 		&edu.ValidationRiskScore,
 		&edu.Source,
@@ -148,6 +150,8 @@ func (r *EducationRepository) GetEducationBySubject(ctx context.Context, subject
 		}
 		return nil, fmt.Errorf("failed to get education: %w", err)
 	}
+
+	edu.ValidationSignals = []string(validationSignals)
 
 	if err := json.Unmarshal(sourceDataJSON, &edu.SourceData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal source_data: %w", err)
@@ -196,10 +200,16 @@ func (r *EducationRepository) CountVerifiedEducationBySchool(ctx context.Context
 	return count, nil
 }
 
-// SaveEducationVerificationRequest tracks paid verification requests
+// SaveEducationVerificationRequest tracks paid verification requests.
+// Takes only educationID and derives subject_id from the subject_education
+// row itself (in the same INSERT, via a subquery) rather than accepting it
+// as a separate caller-supplied parameter — subject_id and education_id
+// each validate independently against their own foreign keys, so a caller
+// passing an educationID that belongs to a DIFFERENT subject than the one
+// supplied would otherwise record a verification request (and its eventual
+// vendor result) against the wrong subject/education pairing undetected.
 func (r *EducationRepository) SaveEducationVerificationRequest(
 	ctx context.Context,
-	subjectID uuid.UUID,
 	educationID uuid.UUID,
 	verificationType string,
 	vendor string,
@@ -208,13 +218,19 @@ func (r *EducationRepository) SaveEducationVerificationRequest(
 	query := `
 		INSERT INTO education_verification_request (
 			subject_id, education_id, verification_type, vendor, vendor_request_id, status
-		) VALUES ($1, $2, $3, $4, $5, 'pending')
+		)
+		SELECT subject_id, education_id, $2, $3, $4, 'pending'
+		FROM subject_education
+		WHERE education_id = $1
 		RETURNING request_id
 	`
 
 	var requestID uuid.UUID
-	err := r.db.QueryRowContext(ctx, query, subjectID, educationID, verificationType, vendor, vendorRequestID).Scan(&requestID)
+	err := r.db.QueryRowContext(ctx, query, educationID, verificationType, vendor, vendorRequestID).Scan(&requestID)
 	if err != nil {
+		if err.Error() == "sql: no rows in result set" {
+			return uuid.Nil, fmt.Errorf("no education record found for education_id %s", educationID)
+		}
 		return uuid.Nil, fmt.Errorf("failed to save verification request: %w", err)
 	}
 
