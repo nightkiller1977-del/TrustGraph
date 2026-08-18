@@ -62,29 +62,22 @@ ALTER TABLE assessment
 ADD COLUMN IF NOT EXISTS education_confidence_score INTEGER,
 ADD COLUMN IF NOT EXISTS education_verified BOOLEAN;
 
--- Consent tracking for Plane B data collection
-CREATE TABLE IF NOT EXISTS subject_consent (
-    consent_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    subject_id UUID NOT NULL REFERENCES subject(subject_id),
+-- Consent tracking for Plane B data collection.
+-- subject_consent and idx_consent_subject already exist from migration 001
+-- (scaffold, unused in Phase 1) with a single-row-per-subject UNIQUE(subject_id).
+-- Recreating the table here is a no-op at best; recreating the index is a
+-- hard "relation already exists" failure that rolls back this entire
+-- migration and terminates API startup. Alter the existing table instead:
+-- widen uniqueness to (subject_id, plane, consent_type) so a subject can
+-- hold one consent record per plane/type combination rather than exactly
+-- one ever, and add the columns/indexes Plane B needs. No Go code
+-- references subject_consent yet, so relaxing this constraint is safe.
+ALTER TABLE subject_consent
+    ADD COLUMN IF NOT EXISTS ip_address INET,
+    ADD COLUMN IF NOT EXISTS user_agent TEXT;
 
-    plane VARCHAR(10),  -- 'A', 'B', 'C'
-    consent_type VARCHAR(50),  -- 'linkedin_oauth', 'government_id', 'liveness'
-    consent_status VARCHAR(50),  -- 'pending', 'granted', 'withdrawn'
+ALTER TABLE subject_consent DROP CONSTRAINT IF EXISTS subject_consent_subject_id_key;
+ALTER TABLE subject_consent ADD CONSTRAINT subject_consent_subject_plane_type_key UNIQUE (subject_id, plane, consent_type);
 
-    policy_version VARCHAR(50),
-    ip_address INET,
-    user_agent TEXT,
-
-    granted_at TIMESTAMPTZ,
-    withdrawn_at TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ,
-
-    terms_accepted JSONB,  -- {'privacy_policy': true, 'data_usage': true}
-    created_at TIMESTAMPTZ DEFAULT now(),
-
-    UNIQUE(subject_id, plane, consent_type)
-);
-
-CREATE INDEX idx_consent_subject ON subject_consent(subject_id);
-CREATE INDEX idx_consent_plane ON subject_consent(plane);
-CREATE INDEX idx_consent_status ON subject_consent(consent_status);
+CREATE INDEX IF NOT EXISTS idx_consent_plane ON subject_consent(plane);
+CREATE INDEX IF NOT EXISTS idx_consent_status ON subject_consent(consent_status);

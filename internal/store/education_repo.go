@@ -68,6 +68,7 @@ func (r *EducationRepository) SaveEducation(ctx context.Context, edu *SubjectEdu
 			source = EXCLUDED.source,
 			source_data = EXCLUDED.source_data,
 			validated_at = EXCLUDED.validated_at,
+			expires_at = EXCLUDED.expires_at,
 			updated_at = now()
 		RETURNING education_id
 	`

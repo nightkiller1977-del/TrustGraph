@@ -278,13 +278,43 @@ func (v *EducationValidator) generateBadge(isVerified bool, schoolName string) s
 	return "📚 " + schoolName + " (Self-Reported)"
 }
 
+// signalPhrases converts validation signal codes into natural-language
+// clauses, in scoring order. A score can reach the verified threshold
+// without every signal passing (e.g. known-school + career-aligned +
+// recent-grad + GPA = 80 with no timeline check at all), so details text
+// must be built from whichever signals actually fired rather than
+// asserting a fixed set of checks all passed.
+func (v *EducationValidator) signalPhrases(signals []string) []string {
+	phraseBySignal := map[string]string{
+		"TIMELINE_PLAUSIBLE":    "timeline is plausible",
+		"KNOWN_UNIVERSITY":      "school is known",
+		"DEGREE_CAREER_ALIGNED": "aligns with current career",
+		"RECENT_GRADUATE":       "recent graduate",
+		"GPA_DISCLOSED":         "GPA disclosed",
+	}
+	order := []string{"TIMELINE_PLAUSIBLE", "KNOWN_UNIVERSITY", "DEGREE_CAREER_ALIGNED", "RECENT_GRADUATE", "GPA_DISCLOSED"}
+	present := make(map[string]bool, len(signals))
+	for _, s := range signals {
+		present[s] = true
+	}
+	phrases := make([]string, 0, len(signals))
+	for _, s := range order {
+		if present[s] {
+			phrases = append(phrases, phraseBySignal[s])
+		}
+	}
+	return phrases
+}
+
 // generateDetails creates human-readable validation details
 func (v *EducationValidator) generateDetails(result EducationValidationResult, edu EducationData) string {
 	if result.IsVerified {
-		details := "Education verified with high confidence. "
-		details += "Timeline is plausible, school is known, and aligns with current career. "
+		details := "Education verified with high confidence."
+		if phrases := v.signalPhrases(result.Signals); len(phrases) > 0 {
+			details += " Signals: " + strings.Join(phrases, ", ") + "."
+		}
 		if result.ConfidenceScore >= 90 {
-			details += "Very strong signal."
+			details += " Very strong signal."
 		}
 		return details
 	}

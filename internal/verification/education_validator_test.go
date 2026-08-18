@@ -2,6 +2,7 @@ package verification
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -222,6 +223,41 @@ func TestEducationValidator_FullValidation(t *testing.T) {
 				t.Error("Signals should be populated")
 			}
 		})
+	}
+}
+
+// A profile can cross the verified threshold (70) without every signal
+// passing — known school (30) + career aligned (25) + recent grad (15) +
+// GPA (10) = 80, with timeline plausibility never checked at all (a
+// too-short 6-month program). generateDetails must not claim "timeline is
+// plausible" here, and must only mention signals that actually fired.
+func TestEducationValidator_DetailsOnlyClaimSignalsThatFired(t *testing.T) {
+	v := NewEducationValidator()
+	ctx := context.Background()
+
+	edu := EducationData{
+		SchoolName:   "Stanford University",
+		FieldOfStudy: "Computer Science",
+		StartDate:    time.Now().AddDate(0, -6, 0),
+		EndDate:      time.Now().AddDate(0, -1, 0), // 5-month duration: fails the 1-8 year timeline check
+		Grade:        "3.8",
+	}
+
+	result := v.Validate(ctx, edu, "user@example.com", "Software Engineer at Google", 24)
+
+	for _, sig := range result.Signals {
+		if sig == "TIMELINE_PLAUSIBLE" {
+			t.Fatalf("expected TIMELINE_PLAUSIBLE to be absent for a 5-month program, got signals %v", result.Signals)
+		}
+	}
+	if !result.IsVerified {
+		t.Fatalf("expected verified (score %d) despite the missing timeline signal", result.ConfidenceScore)
+	}
+	if strings.Contains(strings.ToLower(result.Details), "timeline is plausible") {
+		t.Errorf("Details claims timeline is plausible when TIMELINE_PLAUSIBLE never fired: %q", result.Details)
+	}
+	if !strings.Contains(result.Details, "school is known") {
+		t.Errorf("Details should mention the KNOWN_UNIVERSITY signal that did fire: %q", result.Details)
 	}
 }
 
