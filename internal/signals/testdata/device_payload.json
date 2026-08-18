@@ -1,0 +1,8 @@
+{
+  "subjectId": "11111111-1111-1111-1111-111111111111",
+  "connectionSphereUserId": "cs-user-device-1",
+  "deviceFingerprint": "fp-abc123",
+  "deviceToken": "tok-abc123",
+  "ipAddress": "203.0.113.5",
+  "userAgent": "Mozilla/5.0 (test)"
+}

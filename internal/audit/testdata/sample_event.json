@@ -1,0 +1,19 @@
+{
+  "plane": "A",
+  "action": "assessment.completed",
+  "actor": "trustgraph-api",
+  "actorType": "service",
+  "resourceType": "assessment",
+  "resourceId": "55555555-5555-5555-5555-555555555555",
+  "subjectId": "66666666-6666-6666-6666-666666666666",
+  "details": {
+    "trustTier": "standard",
+    "riskBand": "low",
+    "riskScore": 5,
+    "decision": "accept"
+  },
+  "result": "ok",
+  "errorMessage": "",
+  "requestId": "req-abc-123",
+  "ipAddress": "203.0.113.42"
+}
