@@ -128,4 +128,13 @@ const (
 	ReasonCodeVerificationPending        = "VERIFICATION_PENDING"
 	ReasonCodeAssessmentDeferred         = "ASSESSMENT_DEFERRED"
 	ReasonCodeAssessmentUnavailable      = "ASSESSMENT_UNAVAILABLE"
+
+	// Plane B: Education verification reason codes
+	ReasonCodeEducationVerified          = "EDUCATION_VERIFIED"
+	ReasonCodeEducationSelfReported      = "EDUCATION_SELF_REPORTED"
+	ReasonCodeEducationTimelinePlausible = "EDUCATION_TIMELINE_PLAUSIBLE"
+	ReasonCodeEducationKnownUniversity   = "EDUCATION_KNOWN_UNIVERSITY"
+	ReasonCodeEducationCareerAligned     = "EDUCATION_CAREER_ALIGNED"
+	ReasonCodeEducationRecentGraduate    = "EDUCATION_RECENT_GRADUATE"
+	ReasonCodeEducationGPADisclosed      = "EDUCATION_GPA_DISCLOSED"
 )
