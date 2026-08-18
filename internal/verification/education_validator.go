@@ -4,7 +4,28 @@ import (
 	"context"
 	"strings"
 	"time"
+	"unicode"
 )
+
+// containsKeyword reports whether keyword appears in text. Short keywords
+// (<=3 chars — the acronyms in DegreeKeywords like "it", "cs", "md", "jd",
+// "mba", "phd", "cfo", "ceo") are matched as whole word-boundary tokens
+// only: a raw substring check treats "it" as present in "Digital Art" and
+// "Waiter", awarding an unrelated career-alignment signal. Longer keywords
+// keep substring matching so inflected/plural forms ("Sciences",
+// "Engineers") still match.
+func containsKeyword(text, keyword string) bool {
+	if len(keyword) > 3 {
+		return strings.Contains(text, keyword)
+	}
+	isSeparator := func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }
+	for _, word := range strings.FieldsFunc(text, isSeparator) {
+		if word == keyword {
+			return true
+		}
+	}
+	return false
+}
 
 // EducationData represents education info from LinkedIn OAuth
 type EducationData struct {
@@ -192,6 +213,13 @@ func (v *EducationValidator) validateTimeline(edu EducationData, accountAgeHours
 // isRealUniversity checks against known universities list
 func (v *EducationValidator) isRealUniversity(schoolName string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(schoolName))
+	if normalized == "" {
+		// strings.Contains(known, "") is true for EVERY entry in
+		// KnownUniversities — an omitted school name would otherwise match
+		// on the very first partial-match iteration below and be awarded
+		// KNOWN_UNIVERSITY for having provided no school at all.
+		return false
+	}
 
 	// Direct match
 	if _, exists := KnownUniversities[normalized]; exists {
@@ -230,7 +258,7 @@ func (v *EducationValidator) degreeMatchesCareer(fieldOfStudy, currentJobTitle s
 
 		// Check if field of study contains any keywords from this category
 		for _, keyword := range keywords {
-			if strings.Contains(fieldLower, keyword) {
+			if containsKeyword(fieldLower, keyword) {
 				hasDegreeKeyword = true
 				break
 			}
@@ -238,7 +266,7 @@ func (v *EducationValidator) degreeMatchesCareer(fieldOfStudy, currentJobTitle s
 
 		// Check if job title contains any keywords from this category
 		for _, keyword := range keywords {
-			if strings.Contains(jobLower, keyword) {
+			if containsKeyword(jobLower, keyword) {
 				hasJobKeyword = true
 				break
 			}

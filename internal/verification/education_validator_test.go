@@ -71,6 +71,10 @@ func TestEducationValidator_RealUniversity(t *testing.T) {
 		{"Generic University", "University", true}, // Generic match
 		{"Generic College", "College", true},
 		{"Generic Institute", "Institute", true},
+		// strings.Contains(known, "") is true for every map entry — an
+		// empty normalized name must never fall through to partial match.
+		{"Empty", "", false},
+		{"Whitespace only", "   ", false},
 	}
 
 	for _, tt := range tests {
@@ -313,5 +317,38 @@ func TestEducationValidator_DegreeCareerAlignment_RequiresTermInBothFields(t *te
 
 	if !v.degreeMatchesCareer("Data Science", "Data Analyst") {
 		t.Error("expected alignment: 'data' appears in both fields")
+	}
+}
+
+// Short DegreeKeywords acronyms ("it", "cs", "md", "jd", ...) must match as
+// whole tokens, not arbitrary substrings — "it" is a substring of both
+// "Digital Art" and "Waiter" despite neither having anything to do with IT.
+func TestEducationValidator_DegreeCareerAlignment_ShortKeywordsMatchWholeWordsOnly(t *testing.T) {
+	v := NewEducationValidator()
+
+	if v.degreeMatchesCareer("Digital Art", "Waiter") {
+		t.Error("expected no alignment: 'it' is a substring of 'Digital' and 'Waiter', not a standalone IT keyword in either")
+	}
+
+	if !v.degreeMatchesCareer("Information Technology", "IT Support Specialist") {
+		t.Error("expected alignment: 'IT' appears as a genuine standalone term in the job title")
+	}
+}
+
+func TestContainsKeyword(t *testing.T) {
+	tests := []struct {
+		text, keyword string
+		want          bool
+	}{
+		{"digital art", "it", false},
+		{"waiter", "it", false},
+		{"it support", "it", true},
+		{"remote it consultant", "it", true},
+		{"computer sciences", "science", true}, // long keywords still substring-match inflected forms
+	}
+	for _, tt := range tests {
+		if got := containsKeyword(tt.text, tt.keyword); got != tt.want {
+			t.Errorf("containsKeyword(%q, %q) = %v, want %v", tt.text, tt.keyword, got, tt.want)
+		}
 	}
 }
