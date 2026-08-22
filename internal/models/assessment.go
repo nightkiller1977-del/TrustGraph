@@ -52,6 +52,7 @@ type AssessmentResponse struct {
 	PolicyVersion   string           `json:"policyVersion"`
 	CompletedAt     *time.Time       `json:"completedAt,omitempty"`
 	Signals         SignalsProcessed `json:"signals,omitempty"`
+	EnforcementMode string           `json:"enforcementMode,omitempty"`
 }
 
 // SignalsProcessed indicates which signals were evaluated

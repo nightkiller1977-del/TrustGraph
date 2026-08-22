@@ -34,9 +34,7 @@ CREATE TABLE IF NOT EXISTS assessment (
 );
 
 CREATE INDEX idx_assessment_subject ON assessment(subject_id);
-CREATE UNIQUE INDEX idx_assessment_idempotency_active ON assessment(idempotency_key)
-    WHERE created_at > now() - interval '24 hours';
-CREATE INDEX idx_assessment_idempotency ON assessment(idempotency_key);
+CREATE UNIQUE INDEX idx_assessment_idempotency ON assessment(idempotency_key);
 CREATE INDEX idx_assessment_created ON assessment(created_at DESC);
 
 -- Observation table (raw signals)
