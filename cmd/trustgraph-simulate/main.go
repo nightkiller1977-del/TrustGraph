@@ -2,14 +2,13 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/kelseyhightower/envconfig"
-	"github.com/lib/pq"
 
 	"github.com/nightkiller1977-del/trustgraph/internal/config"
 	"github.com/nightkiller1977-del/trustgraph/internal/models"
@@ -27,7 +26,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	db, err := store.NewPostgres(context.Background(), cfg.DatabaseURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	db, err := store.NewPostgres(ctx, cfg.DatabaseURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "db connect: %v\n", err)
 		os.Exit(1)
@@ -35,7 +37,7 @@ func main() {
 	defer db.Close()
 
 	// Load all reviewed assessments as simulation inputs.
-	rows, err := db.QueryContext(context.Background(), `
+	rows, err := db.QueryContext(ctx, `
 		SELECT a.risk_score, r.outcome
 		FROM assessment a
 		JOIN assessment_review r ON a.assessment_id = r.assessment_id
@@ -51,8 +53,6 @@ func main() {
 	for rows.Next() {
 		var score int
 		var outcome string
-		var _ pq.StringArray
-		var _ sql.NullTime
 		if err := rows.Scan(&score, &outcome); err != nil {
 			fmt.Fprintf(os.Stderr, "scan: %v\n", err)
 			os.Exit(1)
@@ -61,6 +61,10 @@ func main() {
 			RiskScore: score,
 			Outcome:   models.ReviewOutcome(outcome),
 		})
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "row iteration: %v\n", err)
+		os.Exit(1)
 	}
 
 	if len(inputs) == 0 {

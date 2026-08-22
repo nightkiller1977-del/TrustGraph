@@ -63,6 +63,10 @@ func (h *AppealHandler) SubmitAppeal(w http.ResponseWriter, r *http.Request) {
 
 	appeal, err := h.appeals.CreateAppeal(ctx, assessmentID, req.UserMessage)
 	if err != nil {
+		if isUniqueViolation(err) {
+			writeJSONError(w, http.StatusConflict, "already_appealed", "An appeal already exists for this assessment")
+			return
+		}
 		h.logger.Error("appeal creation failed", zap.Error(err))
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Failed to create appeal")
 		return

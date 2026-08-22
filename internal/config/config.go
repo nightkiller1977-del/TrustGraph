@@ -18,4 +18,9 @@ type Config struct {
 	// Phase 1.5: shadow mode — run assessments without enforcing capability gates
 	EnforcementEnabled bool   `envconfig:"ENFORCEMENT_ENABLED" default:"false"`
 	AdminToken         string `envconfig:"ADMIN_TOKEN" default:""`
+
+	// EnforcementThreshold is the risk-score cutoff (0-100) that calibration
+	// metrics and CLI simulation evaluate against — keep these in sync so
+	// /v1/metrics/calibration and trustgraph-simulate report the same cutoff.
+	EnforcementThreshold int `envconfig:"ENFORCEMENT_THRESHOLD" default:"80"`
 }

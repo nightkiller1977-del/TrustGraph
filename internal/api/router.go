@@ -38,7 +38,7 @@ func NewRouter(db *store.PostgresDB, logger *zap.Logger, cfg *config.Config) *mu
 	// Metrics endpoint — require Bearer token
 	metrics := v1.PathPrefix("/metrics").Subrouter()
 	metrics.Use(adminAuth)
-	metricsHandler := NewMetricsHandler(db, logger)
+	metricsHandler := NewMetricsHandler(db, logger, cfg)
 	metrics.HandleFunc("/calibration", metricsHandler.GetCalibration).Methods("GET")
 
 	router.Use(loggingMiddleware(logger))

@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/lib/pq"
 	"go.uber.org/zap"
 
 	"github.com/nightkiller1977-del/trustgraph/internal/audit"
@@ -14,6 +16,17 @@ import (
 	"github.com/nightkiller1977-del/trustgraph/internal/models"
 	"github.com/nightkiller1977-del/trustgraph/internal/store"
 )
+
+// pqUniqueViolation is the PostgreSQL error code for a unique-constraint
+// violation (23505). Handlers use it to turn a check-then-insert race into a
+// clean 409 instead of a generic 500, since the DB constraint is the actual
+// source of truth — the pre-insert existence check is just a fast path.
+const pqUniqueViolation = "23505"
+
+func isUniqueViolation(err error) bool {
+	var pqErr *pq.Error
+	return errors.As(err, &pqErr) && pqErr.Code == pqUniqueViolation
+}
 
 type AdminHandler struct {
 	logger  *zap.Logger
@@ -40,6 +53,12 @@ func (h *AdminHandler) GetQueue(w http.ResponseWriter, r *http.Request) {
 	riskBand := r.URL.Query().Get("risk_band")
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 100 {
+		perPage = 20
+	}
 
 	items, err := h.repo.ListPendingReview(ctx, riskBand, page, perPage)
 	if err != nil {
@@ -123,6 +142,10 @@ func (h *AdminHandler) SubmitReview(w http.ResponseWriter, r *http.Request) {
 
 	review, err := h.reviews.CreateReview(ctx, assessmentID, req.ReviewerEmail, models.ReviewOutcome(req.Outcome), req.Notes)
 	if err != nil {
+		if isUniqueViolation(err) {
+			writeJSONError(w, http.StatusConflict, "already_reviewed", "This assessment has already been reviewed")
+			return
+		}
 		h.logger.Error("review creation failed", zap.Error(err))
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Failed to create review")
 		return

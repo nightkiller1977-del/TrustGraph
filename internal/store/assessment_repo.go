@@ -200,6 +200,9 @@ func (r *AssessmentRepository) ListPendingReview(ctx context.Context, riskBand s
 		item.ReasonCodes = []string(codes)
 		items = append(items, item)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list pending review rows: %w", err)
+	}
 	return items, nil
 }
 

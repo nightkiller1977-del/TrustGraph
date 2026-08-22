@@ -36,28 +36,33 @@ type CalibrationMetrics struct {
 	ByReasonCode       map[string]ReasonCodeStats `json:"byReasonCode"`
 }
 
-// GetCalibrationMetrics computes the full accuracy snapshot.
-func (r *CalibrationRepository) GetCalibrationMetrics(ctx context.Context) (*CalibrationMetrics, error) {
+// GetCalibrationMetrics computes the full accuracy snapshot. threshold is the
+// risk-score cutoff (0-100) a flagged/not-flagged decision is evaluated
+// against — pass the same value used by cmd/trustgraph-simulate so the two
+// tools report FP/FN rates for the same cutoff instead of incompatible
+// definitions (see config.EnforcementThreshold).
+func (r *CalibrationRepository) GetCalibrationMetrics(ctx context.Context, threshold int) (*CalibrationMetrics, error) {
 	m := &CalibrationMetrics{
 		ByRiskBand:   make(map[string]RiskBandStats),
 		ByReasonCode: make(map[string]ReasonCodeStats),
 	}
 
-	// Total reviews + FP/FN rates
+	// Total reviews + FP/FN rates, both measured against the same numeric
+	// risk_score threshold used by policy.SimulateThreshold.
 	err := r.db.QueryRowContext(ctx, `
 		SELECT
-			COUNT(*)                                                                       AS total,
+			COUNT(*)                                                                            AS total,
 			COALESCE(
-				COUNT(*) FILTER (WHERE r.outcome = 'legitimate' AND a.risk_band = 'high')
+				COUNT(*) FILTER (WHERE r.outcome = 'legitimate' AND a.risk_score >= $1)
 				* 1.0 / NULLIF(COUNT(*) FILTER (WHERE r.outcome = 'legitimate'), 0),
-			0)                                                                             AS fp_rate,
+			0)                                                                                  AS fp_rate,
 			COALESCE(
-				COUNT(*) FILTER (WHERE r.outcome = 'confirmed_abuse' AND a.risk_band = 'low')
+				COUNT(*) FILTER (WHERE r.outcome = 'confirmed_abuse' AND a.risk_score < $1)
 				* 1.0 / NULLIF(COUNT(*) FILTER (WHERE r.outcome = 'confirmed_abuse'), 0),
-			0)                                                                             AS fn_rate
+			0)                                                                                  AS fn_rate
 		FROM assessment a
 		JOIN assessment_review r ON a.assessment_id = r.assessment_id
-	`).Scan(&m.TotalReviews, &m.FalsePositiveRate, &m.FalseNegativeRate)
+	`, threshold).Scan(&m.TotalReviews, &m.FalsePositiveRate, &m.FalseNegativeRate)
 	if err != nil {
 		return nil, fmt.Errorf("fp/fn query: %w", err)
 	}
@@ -95,6 +100,9 @@ func (r *CalibrationRepository) GetCalibrationMetrics(ctx context.Context) (*Cal
 		}
 		m.ByRiskBand[band] = stats
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("risk band rows: %w", err)
+	}
 
 	// Per-reason-code precision/recall
 	codeRows, err := r.db.QueryContext(ctx, `
@@ -129,6 +137,9 @@ func (r *CalibrationRepository) GetCalibrationMetrics(ctx context.Context) (*Cal
 			return nil, fmt.Errorf("scan reason code: %w", err)
 		}
 		m.ByReasonCode[code] = stats
+	}
+	if err := codeRows.Err(); err != nil {
+		return nil, fmt.Errorf("reason code rows: %w", err)
 	}
 
 	return m, nil

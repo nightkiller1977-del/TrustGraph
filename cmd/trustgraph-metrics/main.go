@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/kelseyhightower/envconfig"
 
@@ -25,7 +26,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	db, err := store.NewPostgres(context.Background(), cfg.DatabaseURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	db, err := store.NewPostgres(ctx, cfg.DatabaseURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "db connect error: %v\n", err)
 		os.Exit(1)
@@ -33,7 +37,7 @@ func main() {
 	defer db.Close()
 
 	repo := store.NewCalibrationRepository(db)
-	metrics, err := repo.GetCalibrationMetrics(context.Background())
+	metrics, err := repo.GetCalibrationMetrics(ctx, cfg.EnforcementThreshold)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "metrics error: %v\n", err)
 		os.Exit(1)

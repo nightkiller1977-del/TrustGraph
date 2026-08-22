@@ -42,12 +42,12 @@ type AssessmentAppeal struct {
 
 // QueueItem is a pending-review row returned by the admin queue endpoint.
 type QueueItem struct {
-	AssessmentID  string    `json:"assessmentId"`
-	SubjectID     string    `json:"subjectId"`
-	RiskScore     int       `json:"riskScore"`
-	RiskBand      string    `json:"riskBand"`
-	TrustTier     string    `json:"trustTier"`
-	Decision      string    `json:"decision"`
-	ReasonCodes   []string  `json:"reasonCodes"`
-	CreatedAt     time.Time `json:"createdAt"`
+	AssessmentID string    `json:"assessmentId"`
+	SubjectID    string    `json:"subjectId"`
+	RiskScore    int       `json:"riskScore"`
+	RiskBand     string    `json:"riskBand"`
+	TrustTier    string    `json:"trustTier"`
+	Decision     string    `json:"decision"`
+	ReasonCodes  []string  `json:"reasonCodes"`
+	CreatedAt    time.Time `json:"createdAt"`
 }
