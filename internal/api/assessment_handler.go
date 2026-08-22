@@ -180,11 +180,16 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		h.logger.Warn("failed to record observation (non-fatal)", zap.Error(err))
 	}
 
+	enforcementMode := audit.EnforcementModeShadow
+	if h.cfg.EnforcementEnabled {
+		enforcementMode = audit.EnforcementModeEnforced
+	}
 	h.auditor.LogAssessment(ctx, audit.ActionAssessmentCompleted, &assessment.AssessmentID, subjectID, map[string]interface{}{
-		"trustTier": assessment.TrustTier,
-		"riskBand":  assessment.RiskBand,
-		"riskScore": assessment.RiskScore,
-		"decision":  assessment.Decision,
+		"trustTier":       assessment.TrustTier,
+		"riskBand":        assessment.RiskBand,
+		"riskScore":       assessment.RiskScore,
+		"decision":        assessment.Decision,
+		"enforcementMode": enforcementMode,
 	}, requestID)
 
 	h.logger.Info("assessment created",

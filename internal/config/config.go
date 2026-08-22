@@ -14,4 +14,8 @@ type Config struct {
 	IdempotencyTTLHours int `envconfig:"IDEMPOTENCY_TTL_HOURS" default:"24"`
 
 	LogLevel string `envconfig:"LOG_LEVEL" default:"info"`
+
+	// Phase 1.5: shadow mode — run assessments without enforcing capability gates
+	EnforcementEnabled bool   `envconfig:"ENFORCEMENT_ENABLED" default:"false"`
+	AdminToken         string `envconfig:"ADMIN_TOKEN" default:""`
 }

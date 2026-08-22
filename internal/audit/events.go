@@ -24,6 +24,20 @@ const (
 	ActorTypeSystem       = "system"
 )
 
+// EnforcementMode constants mark whether an assessment was acted upon.
+const (
+	EnforcementModeShadow   = "shadow"
+	EnforcementModeEnforced = "enforced"
+)
+
+// Admin and appeal action constants.
+const (
+	ActionAdminQueueViewed     = "admin.queue.viewed"
+	ActionAdminReviewSubmitted = "admin.review.submitted"
+	ActionAppealSubmitted      = "appeal.submitted"
+	ActionAppealReviewed       = "appeal.reviewed"
+)
+
 // Plane constants for the three-plane architecture.
 const (
 	PlaneA = "A"
