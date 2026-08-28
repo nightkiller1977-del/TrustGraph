@@ -56,6 +56,7 @@ const (
 	pSubjectUpsert     = `INSERT INTO subject \(`
 	pSubjectSelect     = `SELECT subject_id FROM subject`
 	pAuditLogInsert    = `INSERT INTO audit_log \(`
+	pAdvisoryLock      = `pg_advisory_xact_lock`
 	pCreateAssessment  = `INSERT INTO assessment \(`
 	pRecordObservation = `INSERT INTO observation \(`
 )
@@ -153,8 +154,15 @@ func TestCreateAssessment_HappyPath_ReturnsPolicyDecision(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		mock.ExpectExec(pAuditLogInsert).WillReturnResult(sqlmock.NewResult(0, 1))
 	}
+	// CreateAssessmentIfAbsent: begin tx, take the advisory lock, re-check
+	// the idempotency window under the lock (still nothing there), insert,
+	// commit.
+	mock.ExpectBegin()
+	mock.ExpectExec(pAdvisoryLock).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(pIdempotencyLookup).WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(pCreateAssessment).
 		WillReturnRows(sqlmock.NewRows([]string{"assessment_id"}).AddRow(newAssessmentID.String()))
+	mock.ExpectCommit()
 	mock.ExpectExec(pRecordObservation).WillReturnResult(sqlmock.NewResult(0, 1))
 	// assessment.completed
 	mock.ExpectExec(pAuditLogInsert).WillReturnResult(sqlmock.NewResult(0, 1))
@@ -208,8 +216,13 @@ func TestCreateAssessment_PersistenceFailure_LogsAssessmentFailedAudit(t *testin
 	for i := 0; i < 5; i++ {
 		mock.ExpectExec(pAuditLogInsert).WillReturnResult(sqlmock.NewResult(0, 1))
 	}
-	// Persistence fails...
+	// Persistence fails inside CreateAssessmentIfAbsent's transaction...
+	mock.ExpectBegin()
+	mock.ExpectExec(pAdvisoryLock).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(pIdempotencyLookup).WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery(pCreateAssessment).WillReturnError(sql.ErrConnDone)
+	// ...the deferred rollback fires since err != nil...
+	mock.ExpectRollback()
 	// ...and the handler must still write an assessment.failed audit event
 	// (this is the ExecContext queued below; if the handler ever stopped
 	// calling LogAssessmentError on this path, mock.ExpectationsWereMet()
