@@ -41,7 +41,10 @@ CREATE INDEX idx_assessment_subject ON assessment(subject_id);
 -- expressible as a static Postgres index (predicates must be IMMUTABLE,
 -- and now() is only STABLE), and a permanent UNIQUE index would silently
 -- break that reuse. This index exists purely to make the TTL lookup's
--- WHERE idempotency_key = $1 fast.
+-- WHERE idempotency_key = $1 fast. The race between the TTL check and the
+-- insert is closed at the application layer instead, by
+-- AssessmentRepository.CreateAssessmentIfAbsent's transaction-scoped
+-- pg_advisory_xact_lock.
 CREATE INDEX idx_assessment_idempotency ON assessment(idempotency_key);
 CREATE INDEX idx_assessment_created ON assessment(created_at DESC);
 

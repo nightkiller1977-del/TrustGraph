@@ -265,6 +265,48 @@ func (r *AssessmentRepository) CreateAssessmentIfAbsent(ctx context.Context, ass
 	return assessment, false, nil
 }
 
+// ListPendingReview returns assessments that have not yet been reviewed, optionally
+// filtered by risk_band.  Results are ordered newest-first and capped at perPage.
+func (r *AssessmentRepository) ListPendingReview(ctx context.Context, riskBand string, page, perPage int) ([]models.QueueItem, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 || perPage > 100 {
+		perPage = 20
+	}
+	offset := (page - 1) * perPage
+
+	query := `
+		SELECT a.assessment_id, a.subject_id, a.risk_score, a.risk_band, a.trust_tier, a.decision, a.reason_codes, a.created_at
+		FROM assessment a
+		LEFT JOIN assessment_review r ON a.assessment_id = r.assessment_id
+		WHERE r.review_id IS NULL
+		  AND ($1 = '' OR a.risk_band = $1)
+		ORDER BY a.created_at DESC
+		LIMIT $2 OFFSET $3
+	`
+	rows, err := r.db.QueryContext(ctx, query, riskBand, perPage, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list pending review: %w", err)
+	}
+	defer rows.Close()
+
+	var items []models.QueueItem
+	for rows.Next() {
+		var item models.QueueItem
+		var codes pq.StringArray
+		if err := rows.Scan(&item.AssessmentID, &item.SubjectID, &item.RiskScore, &item.RiskBand, &item.TrustTier, &item.Decision, &codes, &item.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan queue item: %w", err)
+		}
+		item.ReasonCodes = []string(codes)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list pending review rows: %w", err)
+	}
+	return items, nil
+}
+
 // UpdateAssessmentStatus updates the status and completion time of an assessment
 func (r *AssessmentRepository) UpdateAssessmentStatus(ctx context.Context, assessmentID uuid.UUID, status string, trustTier string, reasonCodes []string) error {
 	query := `
