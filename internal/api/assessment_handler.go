@@ -53,6 +53,11 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		requestID = uuid.New().String()
 	}
 
+	enforcementMode := audit.EnforcementModeShadow
+	if h.cfg.EnforcementEnabled {
+		enforcementMode = audit.EnforcementModeEnforced
+	}
+
 	var req models.AssessmentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "bad_request", "Invalid request body")
@@ -75,8 +80,10 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		h.auditor.LogAssessment(ctx, audit.ActionAssessmentCached, &existing.AssessmentID, existing.SubjectID, map[string]interface{}{
 			"idempotencyKey": req.IdempotencyKey,
 		}, requestID)
+		cachedResp := h.modelToResponse(existing)
+		cachedResp.EnforcementMode = enforcementMode
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(h.modelToResponse(existing))
+		json.NewEncoder(w).Encode(cachedResp)
 		return
 	}
 
@@ -199,10 +206,11 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 	}
 
 	h.auditor.LogAssessment(ctx, audit.ActionAssessmentCompleted, &assessment.AssessmentID, subjectID, map[string]interface{}{
-		"trustTier": assessment.TrustTier,
-		"riskBand":  assessment.RiskBand,
-		"riskScore": assessment.RiskScore,
-		"decision":  assessment.Decision,
+		"trustTier":       assessment.TrustTier,
+		"riskBand":        assessment.RiskBand,
+		"riskScore":       assessment.RiskScore,
+		"decision":        assessment.Decision,
+		"enforcementMode": enforcementMode,
 	}, requestID)
 
 	h.logger.Info("assessment created",
@@ -214,6 +222,7 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 
 	resp := h.modelToResponse(assessment)
 	resp.Signals = models.SignalsProcessed{Processed: processed, Skipped: skipped}
+	resp.EnforcementMode = enforcementMode
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
@@ -262,11 +271,7 @@ func (h *AssessmentHandler) modelToResponse(a *models.Assessment) models.Assessm
 }
 
 func (h *AssessmentHandler) writeError(w http.ResponseWriter, status int, code, message string) {
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"error":   code,
-		"message": message,
-	})
+	writeJSONError(w, status, code, message)
 }
 
 func statusFromError(err error) string {
