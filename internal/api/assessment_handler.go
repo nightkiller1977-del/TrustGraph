@@ -168,12 +168,30 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		CompletedAt:     &now,
 	}
 
-	if err := h.repo.CreateAssessment(ctx, assessment); err != nil {
+	// CreateAssessmentIfAbsent (not CreateAssessment) re-checks the
+	// idempotency window and inserts atomically under an advisory lock —
+	// the earlier GetAssessmentByIdempotencyKey check above is only a
+	// fast-path optimization; a concurrent request carrying the same
+	// idempotency key could have raced past it and inserted first while
+	// this request was busy with signal evaluation/policy above.
+	result, alreadyExisted, err := h.repo.CreateAssessmentIfAbsent(ctx, assessment, h.cfg.IdempotencyTTLHours)
+	if err != nil {
 		h.logger.Error("assessment persist failed", zap.Error(err))
 		h.auditor.LogAssessmentError(ctx, audit.ActionAssessmentFailed, &assessment.AssessmentID, subjectID, map[string]interface{}{
 			"error": err.Error(),
 		}, err.Error(), requestID)
 		h.writeError(w, http.StatusInternalServerError, "internal_error", "Failed to create assessment")
+		return
+	}
+	if alreadyExisted {
+		// Lost the race to a concurrent request with the same idempotency
+		// key — return its result instead of the one just computed here,
+		// same response path as the early cache-hit check above.
+		h.auditor.LogAssessment(ctx, audit.ActionAssessmentCached, &result.AssessmentID, result.SubjectID, map[string]interface{}{
+			"idempotencyKey": req.IdempotencyKey,
+		}, requestID)
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(h.modelToResponse(result))
 		return
 	}
 

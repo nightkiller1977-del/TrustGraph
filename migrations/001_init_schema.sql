@@ -34,7 +34,18 @@ CREATE TABLE IF NOT EXISTS assessment (
 );
 
 CREATE INDEX idx_assessment_subject ON assessment(subject_id);
-CREATE UNIQUE INDEX idx_assessment_idempotency ON assessment(idempotency_key);
+-- Not a UNIQUE index: idempotency is enforced app-side, within a rolling
+-- TTL window (assessment_handler.go's GetAssessmentByIdempotencyKey +
+-- cfg.IdempotencyTTLHours) — a key is legitimately reusable once its
+-- window has passed. A true rolling-window uniqueness constraint isn't
+-- expressible as a static Postgres index (predicates must be IMMUTABLE,
+-- and now() is only STABLE), and a permanent UNIQUE index would silently
+-- break that reuse. This index exists purely to make the TTL lookup's
+-- WHERE idempotency_key = $1 fast. The race between the TTL check and the
+-- insert is closed at the application layer instead, by
+-- AssessmentRepository.CreateAssessmentIfAbsent's transaction-scoped
+-- pg_advisory_xact_lock.
+CREATE INDEX idx_assessment_idempotency ON assessment(idempotency_key);
 CREATE INDEX idx_assessment_created ON assessment(created_at DESC);
 
 -- Observation table (raw signals)
