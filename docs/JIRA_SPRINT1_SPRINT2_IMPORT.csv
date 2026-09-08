@@ -1,6 +1,6 @@
 Project Key,Issue Type,Epic Link,Parent Issue Key,Summary,Description,Story Points,Priority,Labels,Components,Assignee,Reporter,Due Date,Status,Sprint,Environment,Custom field (Target Start Date),Custom field (Target End Date)
-KAN,Epic,,KAN-PLANE-B,"Plane B - Consented Verification (Phase 1)","Implement LinkedIn OAuth, Government ID, Liveness, and Image verification for user-initiated trust signals. Timeline: 7 weeks (Weeks 9-15)",0,High,"ai-commander-ready, plane-b, phase-1",Plane B,,Anthony Larkins,2025-03-31,Ready for AI Commander,"Sprint 1-4",development,2025-03-10,2025-04-25
-KAN,Feature,KAN-PLANE-B,,Sprint 1: LinkedIn OAuth Integration,"Sprint 1 Feature: Implement LinkedIn OAuth 2.0 flow with employment and education data extraction. Timeline: Weeks 9-10",0,High,"ai-commander-ready, sprint-1, linkedin, plane-b",Plane B,,Anthony Larkins,2025-03-16,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-16
+KAN,Epic,,KAN-PLANE-B,"Plane B - Consented Verification (Phase 1)","Implement LinkedIn OAuth, Government ID, Liveness, and Image verification for user-initiated trust signals. Timeline: 7 weeks (Weeks 9-15)",0,High,"ai-commander-ready, plane-b, phase-1",Plane B,,placeholder_engineer_a,2025-03-31,Ready for AI Commander,"Sprint 1-4",development,2025-03-10,2025-04-25
+KAN,Feature,KAN-PLANE-B,,Sprint 1: LinkedIn OAuth Integration,"Sprint 1 Feature: Implement LinkedIn OAuth 2.0 flow with employment and education data extraction. Timeline: Weeks 9-10",0,High,"ai-commander-ready, sprint-1, linkedin, plane-b",Plane B,,placeholder_engineer_a,2025-03-16,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-16
 
 KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-001: LinkedIn OAuth Flow Setup","Implement OAuth 2.0 flow for LinkedIn sign-in, capturing employment and education data.
 
@@ -27,7 +27,7 @@ File: internal/api/oauth_handler.go
 - Unit tests pass (>80% coverage)
 - Integrated with CI/CD pipeline
 - Documentation updated in code comments
-- Ready for QA testing",8,High,"ai-commander-ready, sprint-1, linkedin, oauth",Plane B,"[Engineer A]",Anthony Larkins,2025-03-15,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-15
+- Ready for QA testing",8,High,"ai-commander-ready, sprint-1, linkedin, oauth",Plane B,"[Engineer A]",placeholder_engineer_a,2025-03-15,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-15
 
 KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-002: LinkedIn Data Extraction & Storage","Extract employment and education data from LinkedIn OAuth response. Store in database.
 
@@ -66,7 +66,7 @@ Files:
 - Database schema created and migrated
 - Error handling for malformed data
 - Unit tests for data parsing
-- Integration tests with real LinkedIn responses",5,High,"ai-commander-ready, sprint-1, linkedin, data-model",Plane B,"[Engineer A]",Anthony Larkins,2025-03-13,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-13
+- Integration tests with real LinkedIn responses",5,High,"ai-commander-ready, sprint-1, linkedin, data-model",Plane B,"[Engineer A]",placeholder_engineer_a,2025-03-13,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-13
 
 KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-003: Employment Validator (Free Validation)","Build free employment validation (similar to education validator).
 
@@ -101,7 +101,7 @@ Files:
 - Unit tests >90% coverage
 - Confidence score algorithm validated
 - Performance <1ms per profile
-- Code reviewed and approved",5,High,"ai-commander-ready, sprint-1, linkedin, validation, free-validation",Plane B,"[Engineer A]",Anthony Larkins,2025-03-15,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-15
+- Code reviewed and approved",5,High,"ai-commander-ready, sprint-1, linkedin, validation, free-validation",Plane B,"[Engineer A]",placeholder_engineer_a,2025-03-15,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-15
 
 KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-004: Employment Signal Provider","Create employment signal for assessment pipeline. Contribute to risk scoring.
 
@@ -136,7 +136,7 @@ Files:
 - Contributes correctly to risk scoring
 - Tests pass (>80% coverage)
 - No performance impact on assessments
-- Ready for Sprint 1 testing",3,High,"ai-commander-ready, sprint-1, linkedin, signals",Plane B,"[Engineer A]",Anthony Larkins,2025-03-15,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-15
+- Ready for Sprint 1 testing",3,High,"ai-commander-ready, sprint-1, linkedin, signals",Plane B,"[Engineer A]",placeholder_engineer_a,2025-03-15,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-15
 
 KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-005: LinkedIn Integration Testing","E2E testing of LinkedIn OAuth flow with real profiles.
 
@@ -169,7 +169,7 @@ KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-005: LinkedIn Integration Testing","
 - No errors in production logs
 - Performance <500ms per OAuth callback
 - Database transactions verified correct
-- Ready for production deployment",5,High,"ai-commander-ready, sprint-1, linkedin, testing, qa",Plane B,"[Engineer B]",Anthony Larkins,2025-03-16,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-16
+- Ready for production deployment",5,High,"ai-commander-ready, sprint-1, linkedin, testing, qa",Plane B,"[Engineer B]",placeholder_engineer_a,2025-03-16,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-16
 
 KAN,Story,KAN-PLANE-B,KAN-LI-FEAT-1,"KAN-LI-006: LinkedIn Badges & UI","Render employment verification badges on user profile.
 
@@ -215,9 +215,9 @@ Files:
 - Accessibility requirements met (WCAG 2.1 AA)
 - Performance: <100ms render time
 - QA tested across browsers
-- Screenshots in PR for review",5,High,"ai-commander-ready, sprint-1, linkedin, ui, frontend",Plane B,"[Engineer B]",Anthony Larkins,2025-03-16,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-16
+- Screenshots in PR for review",5,High,"ai-commander-ready, sprint-1, linkedin, ui, frontend",Plane B,"[Engineer B]",placeholder_engineer_a,2025-03-16,Ready for AI Commander,"Sprint 1",development,2025-03-10,2025-03-16
 
-KAN,Feature,KAN-PLANE-B,,Sprint 2: Government ID Verification + Age Gate,"Sprint 2 Feature: Integrate Persona API for government ID verification and enforce age gate. Timeline: Weeks 11-12",0,Critical,"ai-commander-ready, sprint-2, government-id, plane-b",Plane B,,Anthony Larkins,2025-03-30,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-30
+KAN,Feature,KAN-PLANE-B,,Sprint 2: Government ID Verification + Age Gate,"Sprint 2 Feature: Integrate Persona API for government ID verification and enforce age gate. Timeline: Weeks 11-12",0,Critical,"ai-commander-ready, sprint-2, government-id, plane-b",Plane B,,placeholder_engineer_a,2025-03-30,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-30
 
 KAN,Story,KAN-PLANE-B,KAN-ID-FEAT-2,"KAN-ID-001: Persona API Integration","Integrate Persona API for government ID verification and age gate.
 
@@ -280,7 +280,7 @@ type GovernmentIDVerification struct {
 - Security review passed
 - PII handling verified secure
 - Unit tests >90% coverage
-- Ready for age gate integration",8,Critical,"ai-commander-ready, sprint-2, government-id, vendor, critical",Plane B,"[Engineer B]",Anthony Larkins,2025-03-29,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-29
+- Ready for age gate integration",8,Critical,"ai-commander-ready, sprint-2, government-id, vendor, critical",Plane B,"[Engineer B]",placeholder_engineer_a,2025-03-29,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-29
 
 KAN,Story,KAN-PLANE-B,KAN-ID-FEAT-2,"KAN-ID-002: Age Gate Implementation","Enforce age gate in assessment. Block users under 18. CRITICAL for dating app compliance.
 
@@ -340,7 +340,7 @@ Files:
 - Audit trail comprehensive
 - Zero false positives
 - Legal review passed
-- Ready for launch",3,Critical,"ai-commander-ready, sprint-2, government-id, age-gate, critical, compliance",Plane B,"[Engineer A]",Anthony Larkins,2025-03-27,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-27
+- Ready for launch",3,Critical,"ai-commander-ready, sprint-2, government-id, age-gate, critical, compliance",Plane B,"[Engineer A]",placeholder_engineer_a,2025-03-27,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-27
 
 KAN,Story,KAN-PLANE-B,KAN-ID-FEAT-2,"KAN-ID-003: Government ID Testing","Test ID verification with real documents (test accounts from Persona).
 
@@ -409,4 +409,4 @@ KAN,Story,KAN-PLANE-B,KAN-ID-FEAT-2,"KAN-ID-003: Government ID Testing","Test ID
 - Test results attached to ticket
 - Performance benchmarks met
 - Security review passed
-- QA sign-off obtained",5,High,"ai-commander-ready, sprint-2, government-id, testing, qa",Plane B,"[Engineer B]",Anthony Larkins,2025-03-30,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-30
+- QA sign-off obtained",5,High,"ai-commander-ready, sprint-2, government-id, testing, qa",Plane B,"[Engineer B]",placeholder_engineer_a,2025-03-30,Ready for AI Commander,"Sprint 2",development,2025-03-24,2025-03-30
