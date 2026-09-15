@@ -11,12 +11,12 @@ import (
 // disposableDomains is a hardcoded set of known disposable email providers.
 // Phase 1 uses a small static list; future phases may query an external service.
 var disposableDomains = map[string]struct{}{
-	"mailinator.com":     {},
-	"tempmail.com":       {},
-	"guerrillamail.com":  {},
-	"throwaway.email":    {},
-	"yopmail.com":        {},
-	"sharklasers.com":    {},
+	"mailinator.com":    {},
+	"tempmail.com":      {},
+	"guerrillamail.com": {},
+	"throwaway.email":   {},
+	"yopmail.com":       {},
+	"sharklasers.com":   {},
 }
 
 // EmailProvider evaluates email verification status and disposable domain usage.

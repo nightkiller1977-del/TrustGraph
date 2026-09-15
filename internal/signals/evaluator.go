@@ -15,10 +15,14 @@ type Evaluator struct {
 }
 
 // NewEvaluator creates an Evaluator with the standard Plane A signal providers.
+// The age gate runs first: it is the only provider that can produce a
+// hard-blocking deny, and keeping it at the head of the list makes the
+// ordering explicit for any future provider that wants to short-circuit.
 func NewEvaluator(logger *zap.Logger) *Evaluator {
 	return &Evaluator{
 		logger: logger,
 		providers: []Provider{
+			NewAgeGateProvider(),
 			&EmailProvider{},
 			&PhoneProvider{},
 			&DeviceProvider{},
@@ -26,6 +30,29 @@ func NewEvaluator(logger *zap.Logger) *Evaluator {
 			&ImageProvider{},
 		},
 	}
+}
+
+// NewEvaluatorWithProviders creates an Evaluator from an explicit provider list.
+// Tests and callers that need Plane B providers (education, employment) use
+// this instead of the fixed Plane A set.
+func NewEvaluatorWithProviders(logger *zap.Logger, providers ...Provider) *Evaluator {
+	return &Evaluator{logger: logger, providers: providers}
+}
+
+// NewPlaneBEvaluator builds the evaluator used for re-assessment once a subject
+// has consented Plane B data. It is deliberately separate from the
+// registration-time evaluator: at registration Plane B data cannot exist yet.
+// Providers that find nothing to evaluate return an error, which EvaluateAll
+// surfaces as a skipped signal rather than a fabricated score.
+func NewPlaneBEvaluator(logger *zap.Logger, eduRepo *store.EducationRepository) *Evaluator {
+	return NewEvaluatorWithProviders(logger,
+		NewEducationProvider(eduRepo),
+	)
+}
+
+// Providers returns the registered providers in evaluation order.
+func (e *Evaluator) Providers() []Provider {
+	return e.providers
 }
 
 // EvaluateAll runs every registered provider and returns all results.

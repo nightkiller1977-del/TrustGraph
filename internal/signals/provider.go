@@ -2,6 +2,7 @@ package signals
 
 import (
 	"context"
+	"time"
 
 	"github.com/nightkiller1977-del/trustgraph/internal/store"
 )
@@ -28,6 +29,15 @@ type EvalContext struct {
 	IPAddress              string
 	ImageHash              string
 	UserAgent              string
+	// DateOfBirth is the subject's date of birth when supplied. Nil means age
+	// was not established and the age gate reports it as unknown.
+	DateOfBirth *time.Time
+	// AccountAgeHours is how long the subject's account has existed. Plane B
+	// validators use it for timeline-plausibility checks.
+	AccountAgeHours int
+	// CurrentJobTitle is the subject's current role, when known. Plane B
+	// education/employment validators use it for career-alignment checks.
+	CurrentJobTitle string
 }
 
 // Provider evaluates a single signal dimension and returns a result.

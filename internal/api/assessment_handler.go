@@ -25,6 +25,7 @@ type AssessmentHandler struct {
 	repo         *store.AssessmentRepository
 	subjects     *store.SubjectRepository
 	observations *store.ObservationRepository
+	verifs       *store.VerificationRepository
 	evaluator    *signals.Evaluator
 	policyEngine *policy.Engine
 	auditor      *audit.AuditLogger
@@ -38,6 +39,7 @@ func NewAssessmentHandler(db *store.PostgresDB, logger *zap.Logger, cfg *config.
 		repo:         store.NewAssessmentRepository(db),
 		subjects:     store.NewSubjectRepository(db),
 		observations: store.NewObservationRepository(db),
+		verifs:       store.NewVerificationRepository(db),
 		evaluator:    signals.NewEvaluator(logger),
 		policyEngine: policy.NewEngine(logger),
 		auditor:      audit.NewAuditLogger(db, logger),
@@ -66,6 +68,20 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 
 	if req.ContractVersion == "" || req.IdempotencyKey == "" || req.Subject.ConnectionSphereUserID == "" {
 		h.writeError(w, http.StatusBadRequest, "bad_request", "Missing required fields: contractVersion, idempotencyKey, subject.connectionSphereUserId")
+		return
+	}
+
+	// Parse the date of birth up front. The OpenAPI contract places it on the
+	// subject; signals.dateOfBirth is also accepted for backward compatibility. A
+	// malformed date is a client error rather than something to be swallowed:
+	// silently ignoring it would let a bad payload skip the minimum-age gate.
+	dobValue := req.Subject.DateOfBirth
+	if dobValue == "" {
+		dobValue = req.Signals.DateOfBirth
+	}
+	dob, err := policy.ParseDateOfBirth(dobValue)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "bad_request", "dateOfBirth must be an ISO-8601 date (YYYY-MM-DD)")
 		return
 	}
 
@@ -112,6 +128,7 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		DeviceToken:            req.Signals.DeviceToken,
 		IPAddress:              req.Signals.IPAddress,
 		ImageHash:              req.Signals.ImageHash,
+		DateOfBirth:            dob,
 	}
 	if req.RequestContext != nil {
 		evalCtx.UserAgent = req.RequestContext.UserAgent
@@ -147,6 +164,51 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 
 	// Run policy engine
 	policyResult := h.policyEngine.Evaluate(policySignals)
+
+	// An authoritative underage finding from a prior government-ID verification is
+	// a persisted restriction, not a per-request signal. A later assessment that
+	// omits dateOfBirth would otherwise evaluate as AGE_UNKNOWN and could accept a
+	// subject the system has already blocked, so the stored flag forces the deny
+	// outcome regardless of the ordinary signals.
+	persistedAgeBlock, err := h.persistedAgeBlock(ctx, subjectID)
+	if err != nil {
+		h.logger.Error("age block lookup failed", zap.Error(err))
+		h.writeError(w, http.StatusInternalServerError, "internal_error", "Failed to process request")
+		return
+	}
+	if persistedAgeBlock {
+		policyResult = h.policyEngine.EvaluateAgeBlock()
+	}
+
+	// An underage registration is a compliance event, not merely a risk score,
+	// so it gets its own audit action to alert and report on.
+	if containsCode(policyResult.ReasonCodes, models.ReasonCodeUnderageUser) {
+		age := policy.EvaluateAgeGate(dob, time.Now()).Age
+		details := map[string]interface{}{
+			"age":                    age,
+			"minimumAge":             policy.MinimumAge,
+			"connectionSphereUserId": req.Subject.ConnectionSphereUserID,
+		}
+		if persistedAgeBlock {
+			details["source"] = "persisted_age_block"
+		}
+		h.auditor.Log(ctx, audit.AuditEvent{
+			Plane:        audit.PlaneA,
+			Action:       audit.ActionAgeGateBlocked,
+			Actor:        "trustgraph-api",
+			ActorType:    audit.ActorTypeService,
+			ResourceType: "subject",
+			SubjectID:    &subjectID,
+			Details:      details,
+			Result:       "blocked",
+			RequestID:    requestID,
+		})
+		h.logger.Warn("underage registration blocked",
+			zap.String("connection_sphere_user_id", req.Subject.ConnectionSphereUserID),
+			zap.Int("age", age),
+			zap.Bool("persisted_age_block", persistedAgeBlock),
+		)
+	}
 
 	now := time.Now()
 	assessment := &models.Assessment{
@@ -274,9 +336,32 @@ func (h *AssessmentHandler) writeError(w http.ResponseWriter, status int, code, 
 	writeJSONError(w, status, code, message)
 }
 
+// persistedAgeBlock reports whether the subject already carries an enforceable
+// underage restriction from an earlier verification. A lookup failure is
+// returned so the caller can fail closed rather than assess an unknown subject.
+func (h *AssessmentHandler) persistedAgeBlock(ctx context.Context, subjectID uuid.UUID) (bool, error) {
+	if h.verifs == nil {
+		return false, nil
+	}
+	flags, err := h.verifs.GetSubjectVerificationFlags(ctx, subjectID)
+	if err != nil {
+		return false, err
+	}
+	return flags != nil && flags.AgeBlocked, nil
+}
+
 func statusFromError(err error) string {
 	if err != nil {
 		return "error"
 	}
 	return "ok"
+}
+
+func containsCode(codes []string, want string) bool {
+	for _, c := range codes {
+		if c == want {
+			return true
+		}
+	}
+	return false
 }

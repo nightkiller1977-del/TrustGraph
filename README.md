@@ -20,6 +20,31 @@ The old README's “Phase 1 Planning” checklist is stale. `main` now contains 
 - Appeals/policy-simulation scaffolding for evaluating and reviewing decisions.
 - ConnectSphere integration for registration-time assessment and trust-tier/capability gating/backfill workflows.
 
+### Plane B & C status (September 2026)
+
+The Plane B (consented verification) and Plane C (investigation) code has landed
+on `main`. What that means in practice, and what it does not:
+
+- **Code complete:** age gate, consent capture/withdrawal, LinkedIn OAuth
+  (authorize + callback with CSRF state), employment and education validators,
+  government-ID, liveness, and image-verification integrations, investigator
+  RBAC, investigation case management, the OSINT tool set, and per-access
+  audit trails. All of it builds, vets, and is covered by unit tests.
+- **Not validated in production:** every external vendor integration
+  (government ID, liveness, reverse image, synthetic image, SpiderFoot) is
+  reachable only when its credentials are configured. With no configuration the
+  endpoints return `503 not_configured`; they never silently report a pass.
+  Vendor behaviour has not been exercised against the live services in this
+  repository, only against recorded/fake responses in tests.
+- **Age gate:** enforced at assessment time for dates of birth supplied to the
+  service. It is only as strong as the DOB source. The government-ID check can
+  supply a stronger DOB, but the two are not yet coupled, so a user who
+  bypasses the registration DOB is not re-checked until they verify an ID.
+- **Data minimisation:** raw document images, selfies, and video frames are
+  passed to the vendor and are not persisted by TrustGraph. LinkedIn OAuth
+  access/refresh tokens are stored to allow later refresh and are the most
+  sensitive data the service retains.
+
 TrustGraph should **not** be described as a finished automated safety system. The current architecture deliberately supports observation, human review, calibration, and policy simulation because trust signals can be incomplete or wrong and may have meaningful consequences for users.
 
 ## Role in ConnectSphere
@@ -72,6 +97,16 @@ A typical Go validation pass is:
 go build ./...
 go vet ./...
 go test ./...
+```
+
+The default test run needs no database. The store integration tests run the
+real migrations against a real PostgreSQL and are gated behind both the
+`integration` build tag and `TEST_DATABASE_URL`, so they skip silently when no
+database is configured:
+
+```bash
+TEST_DATABASE_URL='postgres://user:pass@localhost:5432/trustgraph_test?sslmode=disable' \
+  go test -tags=integration ./internal/store/...   # or: make test-integration
 ```
 
 Use `Makefile`, `docker-compose.yml`, `.env.example`, `DEVELOPER.md`, and the current migrations as the source of truth for the development environment. Do not commit real database credentials, tokens, or private user evidence.

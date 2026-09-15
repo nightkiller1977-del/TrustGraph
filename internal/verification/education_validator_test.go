@@ -11,10 +11,10 @@ func TestEducationValidator_TimelinePlausibility(t *testing.T) {
 	v := NewEducationValidator()
 
 	tests := []struct {
-		name        string
-		edu         EducationData
+		name         string
+		edu          EducationData
 		accountHours int
-		want        bool
+		want         bool
 	}{
 		{
 			name: "valid timeline - graduated 2 years ago",
@@ -91,10 +91,10 @@ func TestEducationValidator_DegreeCareerAlignment(t *testing.T) {
 	v := NewEducationValidator()
 
 	tests := []struct {
-		name           string
-		fieldOfStudy   string
+		name            string
+		fieldOfStudy    string
 		currentJobTitle string
-		want           bool
+		want            bool
 	}{
 		{
 			name:            "CS degree + Software Engineer",
@@ -149,12 +149,12 @@ func TestEducationValidator_FullValidation(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		name              string
-		edu               EducationData
-		currentJobTitle   string
-		accountAgeHours   int
-		minConfidence     int
-		shouldBeVerified  bool
+		name             string
+		edu              EducationData
+		currentJobTitle  string
+		accountAgeHours  int
+		minConfidence    int
+		shouldBeVerified bool
 	}{
 		{
 			name: "perfect profile - Stanford CS -> Software Engineer",
@@ -167,7 +167,7 @@ func TestEducationValidator_FullValidation(t *testing.T) {
 			},
 			currentJobTitle:  "Software Engineer at Google",
 			accountAgeHours:  48,
-			minConfidence:    70,  // Realistic: will get 4-5 signals
+			minConfidence:    70, // Realistic: will get 4-5 signals
 			shouldBeVerified: true,
 		},
 		{
@@ -195,7 +195,7 @@ func TestEducationValidator_FullValidation(t *testing.T) {
 			},
 			currentJobTitle:  "Manager",
 			accountAgeHours:  24,
-			minConfidence:    30,  // Will get timeline + known university = 50, minus not recent = 30-40
+			minConfidence:    30, // Will get timeline + known university = 50, minus not recent = 30-40
 			shouldBeVerified: false,
 		},
 	}
