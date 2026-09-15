@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // UsernameSearchTool checks whether a username exists on a set of well-known
@@ -24,6 +26,7 @@ type UsernameSearchTool struct {
 	HTTPClient *http.Client
 	Sites      map[string]string
 	Timeout    time.Duration
+	Logger     *zap.Logger
 }
 
 func NewUsernameSearchTool() *UsernameSearchTool {
@@ -90,6 +93,7 @@ func (t *UsernameSearchTool) Run(ctx context.Context, query map[string]interface
 		mu       sync.Mutex
 		findings []Finding
 		skipped  []string
+		failed   []string
 		wg       sync.WaitGroup
 	)
 
@@ -104,7 +108,9 @@ func (t *UsernameSearchTool) Run(ctx context.Context, query map[string]interface
 				mu.Unlock()
 				return
 			}
-			if t.exists(ctx, profileURL) {
+			outcome, probeErr := t.probe(ctx, profileURL)
+			switch outcome {
+			case probePresent:
 				mu.Lock()
 				findings = append(findings, Finding{
 					Type:   "username_presence",
@@ -116,35 +122,84 @@ func (t *UsernameSearchTool) Run(ctx context.Context, query map[string]interface
 					},
 				})
 				mu.Unlock()
+			case probeError:
+				// A timed-out or rejected probe is not evidence the profile is
+				// absent; recording the site in `failed` keeps a connection error
+				// from being read as a confirmed miss.
+				t.logger().Warn("username probe failed",
+					zap.String("site", site), zap.Error(probeErr))
+				mu.Lock()
+				failed = append(failed, site)
+				mu.Unlock()
 			}
 		}(site, template)
 	}
 	wg.Wait()
 
+	summary := map[string]interface{}{
+		"sitesChecked": len(t.Sites) - len(skipped) - len(failed),
+		"sitesMatched": len(findings),
+		"sitesSkipped": len(skipped),
+		"sitesFailed":  len(failed),
+	}
+	if len(failed) > 0 {
+		// The result is incomplete: some sites were never actually checked, so a
+		// zero-finding answer must not be read as "no profiles found".
+		summary["incomplete"] = true
+		summary["failedSites"] = failed
+	}
+
 	return &Result{
 		Tool:     t.Name(),
 		Query:    map[string]interface{}{"username": username},
-		Summary:  map[string]interface{}{"sitesChecked": len(t.Sites), "sitesMatched": len(findings), "sitesSkipped": len(skipped)},
+		Summary:  summary,
 		Count:    len(findings),
 		Findings: findings,
 		Duration: time.Since(start),
 	}, nil
 }
 
-func (t *UsernameSearchTool) exists(ctx context.Context, profileURL string) bool {
+// probeOutcome distinguishes a confirmed absence from a probe that never
+// produced an answer.
+type probeOutcome int
+
+const (
+	probeAbsent probeOutcome = iota
+	probePresent
+	probeError
+)
+
+// probe performs one HEAD request. A transport failure or non-2xx status is
+// returned as probeError so the caller can report the site as unchecked rather
+// than as a missing profile.
+func (t *UsernameSearchTool) probe(ctx context.Context, profileURL string) (probeOutcome, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, profileURL, nil)
 	if err != nil {
-		return false
+		return probeError, err
 	}
 	req.Header.Set("User-Agent", "TrustGraph-OSINT/1.0 (+investigation)")
 
 	resp, err := t.httpClient().Do(req)
 	if err != nil {
-		return false
+		return probeError, err
 	}
 	defer resp.Body.Close()
 
-	return resp.StatusCode == http.StatusOK
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		return probePresent, nil
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
+		return probeAbsent, nil
+	default:
+		return probeError, fmt.Errorf("unexpected status %d", resp.StatusCode)
+	}
+}
+
+func (t *UsernameSearchTool) logger() *zap.Logger {
+	if t.Logger != nil {
+		return t.Logger
+	}
+	return zap.NewNop()
 }
 
 func (t *UsernameSearchTool) httpClient() *http.Client {

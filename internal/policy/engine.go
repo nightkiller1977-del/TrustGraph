@@ -178,6 +178,22 @@ func mapScoreToTierBandDecision(score int) (tier, band, decision string) {
 	}
 }
 
+// EvaluateAgeBlock returns the decision imposed when the subject already
+// carries a persisted underage restriction. It mirrors the underage hard-block
+// rule so a later assessment without a date of birth cannot soften an
+// authoritative block: the tier is limited and the decision is deny.
+func (e *Engine) EvaluateAgeBlock() *PolicyResult {
+	return &PolicyResult{
+		TrustTier:       models.TrustTierLimited,
+		RiskBand:        models.RiskBandHigh,
+		RiskScore:       100,
+		Decision:        decisionDeny,
+		ReasonCodes:     []string{models.ReasonCodeUnderageUser},
+		RequiredActions: []string{models.RequiredActionBlockAccount},
+		PolicyVersion:   CurrentPolicyVersion,
+	}
+}
+
 // riskBandForScore maps a score to a risk band without setting tier/decision.
 // Used when a hard-block rule overrides the tier but the band should still
 // reflect the numeric score.

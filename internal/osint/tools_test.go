@@ -211,3 +211,54 @@ func TestUsernameSearchTool_FindsMatchingSite(t *testing.T) {
 	assert.Equal(t, "TestSite", result.Findings[0].Source)
 	assert.Equal(t, site.URL+"/alice", result.Findings[0].Value)
 }
+
+// A probe that fails (timeout, connection refused, unexpected status) must be
+// reported as an unchecked site, not as an absent profile: otherwise a
+// zero-finding result reads as "no profiles found" when nothing was verified.
+func TestUsernameSearchTool_ReportsFailedProbesAsIncomplete(t *testing.T) {
+	t.Run("not found is a confirmed absence", func(t *testing.T) {
+		site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer site.Close()
+
+		tool := NewUsernameSearchTool()
+		tool.Sites = map[string]string{"TestSite": site.URL}
+
+		result, err := tool.Run(context.Background(), map[string]interface{}{"username": "alice"})
+		require.NoError(t, err)
+		assert.Zero(t, result.Count)
+		assert.Equal(t, 1, result.Summary["sitesChecked"])
+		assert.NotEqual(t, true, result.Summary["incomplete"])
+	})
+
+	t.Run("server error is incomplete", func(t *testing.T) {
+		site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer site.Close()
+
+		tool := NewUsernameSearchTool()
+		tool.Sites = map[string]string{"TestSite": site.URL}
+
+		result, err := tool.Run(context.Background(), map[string]interface{}{"username": "alice"})
+		require.NoError(t, err)
+		assert.Zero(t, result.Count)
+		assert.Equal(t, 0, result.Summary["sitesChecked"])
+		assert.Equal(t, 1, result.Summary["sitesFailed"])
+		assert.Equal(t, true, result.Summary["incomplete"])
+	})
+
+	t.Run("unreachable host is incomplete", func(t *testing.T) {
+		tool := NewUsernameSearchTool()
+		// Reserved TEST-NET-1 address that no server answers.
+		tool.Sites = map[string]string{"TestSite": "http://192.0.2.1"}
+		tool.Timeout = 2 * time.Second
+		tool.HTTPClient = &http.Client{Timeout: time.Second}
+
+		result, err := tool.Run(context.Background(), map[string]interface{}{"username": "alice"})
+		require.NoError(t, err)
+		assert.Equal(t, 1, result.Summary["sitesFailed"])
+		assert.Equal(t, true, result.Summary["incomplete"])
+	})
+}

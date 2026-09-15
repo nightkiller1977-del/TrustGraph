@@ -143,6 +143,21 @@ func TestReverseImageClient_ParsesWrappedAndBareResponses(t *testing.T) {
 		require.NoError(t, err)
 		assert.Len(t, result.Matches, 1)
 	})
+
+	// A provider that answers 200 with an object carrying no result field has not
+	// performed a search; it must be reported as an error so the image flow marks
+	// the check incomplete instead of recording a clean result.
+	t.Run("empty object is an error", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{}`))
+		}))
+		defer server.Close()
+
+		client := NewReverseImageClient(server.URL, "key")
+		result, err := client.Search(context.Background(), []byte("image"))
+		require.Error(t, err)
+		assert.Nil(t, result)
+	})
 }
 
 func TestSyntheticImageClient_ThresholdApplied(t *testing.T) {

@@ -180,31 +180,32 @@ func (h *InvestigationHandler) UpdateCase(w http.ResponseWriter, r *http.Request
 
 	// Closing or resolving a case is a supervisor action: it ends the
 	// investigation and is the point where a false accusation would be sealed
-	// into the record.
+	// into the record. The same protection extends to any later edit of a case
+	// that is already terminal — without it an investigator could rewrite
+	// findings, resolution, assignment, or priority by simply omitting `status`.
+	existing, err := h.cases.GetCase(ctx, caseID)
+	if err != nil {
+		h.logger.Error("load case for authorization failed", zap.Error(err))
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Failed to load case")
+		return
+	}
+	if existing == nil {
+		writeJSONError(w, http.StatusNotFound, "not_found", "Case not found")
+		return
+	}
+	terminal := existing.Status == models.CaseStatusClosed || existing.Status == models.CaseStatusResolved
+
 	closing := req.Status != nil && (*req.Status == models.CaseStatusClosed || *req.Status == models.CaseStatusResolved)
 	required := RoleInvestigatorInvestigator
-	if closing {
+	if closing || terminal {
 		required = RoleInvestigatorSupervisor
 	}
 
 	// A break-glass grant may be scoped to a subject or case, so an elevated
 	// request must be authorised against this case's identifiers; a grant issued
-	// for another case must not cover this one. The common path (sufficient
-	// standing role) skips the extra lookup entirely.
+	// for another case must not cover this one.
 	var grant *models.BreakGlassGrant
-	if roleRank(investigatorRole(ctx)) >= roleRank(required) {
-		grant = nil
-	} else {
-		existing, err := h.cases.GetCase(ctx, caseID)
-		if err != nil {
-			h.logger.Error("load case for authorization failed", zap.Error(err))
-			writeJSONError(w, http.StatusInternalServerError, "internal_error", "Failed to load case")
-			return
-		}
-		if existing == nil {
-			writeJSONError(w, http.StatusNotFound, "not_found", "Case not found")
-			return
-		}
+	if roleRank(investigatorRole(ctx)) < roleRank(required) {
 		caseSubjectID := parseOptionalUUID(existing.SubjectID)
 		grant = requireRoleOrBreakGlass(ctx, w, required, caseSubjectID, &caseID, h.cases, h.logger)
 		if grant == nil {
@@ -422,15 +423,24 @@ func (h *InvestigationHandler) RequestBreakGlass(w http.ResponseWriter, r *http.
 	}
 
 	var subjectID, caseID *uuid.UUID
+	// A malformed scope identifier must be rejected, not ignored: silently dropping
+	// it would create an unscoped grant, widening an intended subject- or
+	// case-limited emergency request into system-wide supervisor access.
 	if req.SubjectID != "" {
-		if id, err := uuid.Parse(req.SubjectID); err == nil {
-			subjectID = &id
+		id, err := uuid.Parse(req.SubjectID)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "subjectId must be a UUID")
+			return
 		}
+		subjectID = &id
 	}
 	if req.CaseID != "" {
-		if id, err := uuid.Parse(req.CaseID); err == nil {
-			caseID = &id
+		id, err := uuid.Parse(req.CaseID)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "caseId must be a UUID")
+			return
 		}
+		caseID = &id
 	}
 
 	actor := investigatorActor(ctx)
@@ -479,6 +489,7 @@ func (h *InvestigationHandler) GetAccessLog(w http.ResponseWriter, r *http.Reque
 	// A grant scoped to a subject or case only authorises reading that target's
 	// access log, so an elevated request is checked against the case's
 	// identifiers. The common path (supervisor) skips the extra lookup.
+	var grant *models.BreakGlassGrant
 	if roleRank(investigatorRole(ctx)) < roleRank(RoleInvestigatorSupervisor) {
 		existing, err := h.cases.GetCase(ctx, caseID)
 		if err != nil {
@@ -491,7 +502,8 @@ func (h *InvestigationHandler) GetAccessLog(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		caseSubjectID := parseOptionalUUID(existing.SubjectID)
-		if requireRoleOrBreakGlass(ctx, w, RoleInvestigatorSupervisor, caseSubjectID, &caseID, h.cases, h.logger) == nil {
+		grant = requireRoleOrBreakGlass(ctx, w, RoleInvestigatorSupervisor, caseSubjectID, &caseID, h.cases, h.logger)
+		if grant == nil {
 			return
 		}
 	}
@@ -501,6 +513,13 @@ func (h *InvestigationHandler) GetAccessLog(w http.ResponseWriter, r *http.Reque
 		h.logger.Error("list access log failed", zap.Error(err))
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Failed to load access log")
 		return
+	}
+
+	// A break-glass read of the access log is itself a sensitive, privileged
+	// access: record it so the elevation and the grant that authorised it are
+	// attributable in the trail, not merely the nil check above.
+	if grant != nil {
+		h.recordAccess(ctx, caseID.String(), nil, investigatorActor(ctx), investigatorRole(ctx), "access_log.view", true, "", grant)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"caseId": caseID.String(), "entries": entries})

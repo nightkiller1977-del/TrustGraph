@@ -102,6 +102,9 @@ func (c *ReverseImageClient) Search(ctx context.Context, image []byte) (*Reverse
 
 // decodeReverseImageMatches accepts the two shapes seen in the wild: a bare
 // JSON array of matches, or an object wrapping them under "matches"/"results".
+// An object carrying neither field is not a usable answer — treating it as an
+// empty match list would record a provider that returned nothing as a clean
+// result — so it is reported as an error instead.
 func decodeReverseImageMatches(body []byte) ([]ReverseImageMatch, error) {
 	var direct []ReverseImageMatch
 	if err := json.Unmarshal(body, &direct); err == nil {
@@ -115,10 +118,14 @@ func decodeReverseImageMatches(body []byte) ([]ReverseImageMatch, error) {
 	if err := json.Unmarshal(body, &wrapped); err != nil {
 		return nil, fmt.Errorf("decode reverse image response: %w", err)
 	}
-	if wrapped.Matches != nil {
+	switch {
+	case wrapped.Matches != nil:
 		return wrapped.Matches, nil
+	case wrapped.Results != nil:
+		return wrapped.Results, nil
+	default:
+		return nil, fmt.Errorf("reverse image response contains neither \"matches\" nor \"results\"")
 	}
-	return wrapped.Results, nil
 }
 
 func (c *ReverseImageClient) httpClient() *http.Client {
