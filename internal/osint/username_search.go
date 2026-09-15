@@ -76,9 +76,11 @@ func (t *UsernameSearchTool) Run(ctx context.Context, query map[string]interface
 	if err != nil {
 		return nil, err
 	}
-	username, err = validateUsername(username)
-	if err != nil {
-		return nil, err
+	// Inline allowlist check: CodeQL's Go request-forgery model treats a regexp
+	// match as a barrier guard, so keeping it here (rather than in a helper)
+	// lets the analysis see the sanitization on the value that reaches the URL.
+	if !usernameRE.MatchString(username) {
+		return nil, fmt.Errorf("username may only contain letters, digits, dot, underscore, and hyphen")
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, t.Timeout)
@@ -95,8 +97,8 @@ func (t *UsernameSearchTool) Run(ctx context.Context, query map[string]interface
 		wg.Add(1)
 		go func(site, template string) {
 			defer wg.Done()
-			profileURL, err := buildProfileURL(template, username)
-			if err != nil {
+			profileURL, joinErr := buildProfileURL(template, username)
+			if joinErr != nil {
 				mu.Lock()
 				skipped = append(skipped, site)
 				mu.Unlock()
