@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"net/url"
 	"time"
 )
 
@@ -52,9 +52,9 @@ func (t *DomainIntelTool) Run(ctx context.Context, query map[string]interface{})
 	if err != nil {
 		return nil, err
 	}
-	domain = strings.ToLower(strings.TrimPrefix(domain, "www."))
-	if !strings.Contains(domain, ".") || strings.ContainsAny(domain, " /") {
-		return nil, fmt.Errorf("domain must be a bare hostname such as example.com")
+	domain, err = validateHostname(domain)
+	if err != nil {
+		return nil, err
 	}
 
 	findings := make([]Finding, 0)
@@ -102,7 +102,14 @@ type rdapResponse struct {
 }
 
 func (t *DomainIntelTool) fetchRDAP(ctx context.Context, domain string) ([]Finding, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, t.RDAPBaseURL+domain, nil)
+	reqURL, err := url.JoinPath(t.RDAPBaseURL, domain)
+	if err != nil {
+		return nil, fmt.Errorf("build rdap url: %w", err)
+	}
+	if err := assertSameHost(t.RDAPBaseURL, reqURL); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build rdap request: %w", err)
 	}
@@ -185,8 +192,11 @@ var dnsTypeNames = map[int]string{
 func (t *DomainIntelTool) fetchDNS(ctx context.Context, domain string) ([]Finding, error) {
 	findings := make([]Finding, 0)
 	for _, recordType := range []string{"A", "MX", "NS", "TXT"} {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-			fmt.Sprintf("%s?name=%s&type=%s", t.DNSURL, domain, recordType), nil)
+		reqURL, err := queryURL(t.DNSURL, map[string]string{"name": domain, "type": recordType})
+		if err != nil {
+			return findings, fmt.Errorf("build dns url: %w", err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 		if err != nil {
 			return findings, fmt.Errorf("build dns request: %w", err)
 		}

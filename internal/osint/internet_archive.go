@@ -50,6 +50,9 @@ func (t *InternetArchiveTool) Run(ctx context.Context, query map[string]interfac
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
 		return nil, fmt.Errorf("url must be an absolute http(s) URL")
 	}
+	if parsed.Host == "" || parsed.User != nil {
+		return nil, fmt.Errorf("url must be an absolute http(s) URL without userinfo")
+	}
 
 	limit := 50
 	if raw, ok := query["limit"]; ok {
@@ -58,8 +61,15 @@ func (t *InternetArchiveTool) Run(ctx context.Context, query map[string]interfac
 		}
 	}
 
-	endpoint := fmt.Sprintf("%s?url=%s&output=json&limit=%d&collapse=digest",
-		t.BaseURL, url.QueryEscape(target), limit)
+	endpoint, err := queryURL(t.BaseURL, map[string]string{
+		"url":      target,
+		"output":   "json",
+		"limit":    fmt.Sprintf("%d", limit),
+		"collapse": "digest",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build archive url: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {

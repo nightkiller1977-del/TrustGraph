@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"sync"
 	"time"
 )
@@ -59,8 +58,9 @@ func (t *UsernameSearchTool) Run(ctx context.Context, query map[string]interface
 	if err != nil {
 		return nil, err
 	}
-	if strings.ContainsAny(username, " /?#@") {
-		return nil, fmt.Errorf("username must not contain spaces, slashes, or URL delimiters")
+	username, err = validateUsername(username)
+	if err != nil {
+		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, t.Timeout)
@@ -69,6 +69,7 @@ func (t *UsernameSearchTool) Run(ctx context.Context, query map[string]interface
 	var (
 		mu       sync.Mutex
 		findings []Finding
+		skipped  []string
 		wg       sync.WaitGroup
 	)
 
@@ -77,6 +78,12 @@ func (t *UsernameSearchTool) Run(ctx context.Context, query map[string]interface
 		go func(site, template string) {
 			defer wg.Done()
 			profileURL := fmt.Sprintf(template, url.PathEscape(username))
+			if err := assertHostPinned(template, profileURL); err != nil {
+				mu.Lock()
+				skipped = append(skipped, site)
+				mu.Unlock()
+				return
+			}
 			if t.exists(ctx, profileURL) {
 				mu.Lock()
 				findings = append(findings, Finding{
@@ -97,7 +104,7 @@ func (t *UsernameSearchTool) Run(ctx context.Context, query map[string]interface
 	return &Result{
 		Tool:     t.Name(),
 		Query:    map[string]interface{}{"username": username},
-		Summary:  map[string]interface{}{"sitesChecked": len(t.Sites), "sitesMatched": len(findings)},
+		Summary:  map[string]interface{}{"sitesChecked": len(t.Sites), "sitesMatched": len(findings), "sitesSkipped": len(skipped)},
 		Count:    len(findings),
 		Findings: findings,
 		Duration: time.Since(start),
