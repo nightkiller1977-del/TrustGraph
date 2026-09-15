@@ -29,6 +29,31 @@ func sha256Hex(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// maxUploadPayloadBytes caps the JSON body of the upload handlers. Base64
+// inflates a payload by ~4/3, so 8 MiB of body is about 6 MiB of decoded image:
+// comfortably above any real document/selfie/frame and far below what could
+// exhaust the process, since the encoded string, the decoded bytes, and the
+// vendor request body would otherwise all be resident at once.
+const maxUploadPayloadBytes = 8 << 20
+
+// decodeUploadBody caps and decodes a JSON upload body. It returns false and
+// writes a 413 if the body exceeds the limit, so the caller can return.
+func decodeUploadBody(w http.ResponseWriter, r *http.Request, dst interface{}) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadPayloadBytes)
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(dst); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "payload_too_large",
+				"The uploaded payload exceeds the size limit")
+			return false
+		}
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "Invalid request body")
+		return false
+	}
+	return true
+}
+
 // verificationService bundles the vendor clients and the LinkedIn OAuth config
 // so the handler has one collaborator instead of six.
 type verificationService struct {
@@ -232,8 +257,7 @@ func (h *VerificationHandler) GovernmentIDVerify(w http.ResponseWriter, r *http.
 		DocumentType  string `json:"documentType"`
 		CountryCode   string `json:"countryCode"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "bad_request", "Invalid request body")
+	if !decodeUploadBody(w, r, &req) {
 		return
 	}
 
@@ -302,7 +326,14 @@ func (h *VerificationHandler) GovernmentIDVerify(w http.ResponseWriter, r *http.
 		return
 	}
 	if err := h.verifs.MarkVerified(ctx, subjectID, models.VerificationTypeGovernmentID); err != nil {
+		// The subject-level flag is what badges and capability gating read. A
+		// verified government-ID row that is not reflected there would leave the
+		// subject unverified despite this response, so surface the failure rather
+		// than acknowledging a verification the rest of the system cannot see.
 		h.logger.Error("mark id verified failed", zap.Error(err))
+		h.completeVerification(ctx, verificationID, "", models.VerificationStatusFailed, "could not record verified state", result.CostUSD, details)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Verification succeeded but could not be recorded")
+		return
 	}
 
 	// A verified date of birth is authoritative in a way the self-reported one
@@ -314,6 +345,15 @@ func (h *VerificationHandler) GovernmentIDVerify(w http.ResponseWriter, r *http.
 		age := policy.EvaluateAgeGate(result.DateOfBirth, time.Now())
 		details["ageStatus"] = age.Status
 		if age.Status == policy.AgeStatusUnderage {
+			// Persist the restriction so it outlives this request and can be
+			// enforced by capability gating; an audit row alone would not stop the
+			// subject registering with a falsified or omitted DOB.
+			if err := h.verifs.SetAgeBlock(ctx, subjectID, "government_id_verification"); err != nil {
+				h.logger.Error("persist age block failed", zap.Error(err))
+				h.completeVerification(ctx, verificationID, "", models.VerificationStatusFailed, "could not record age restriction", result.CostUSD, details)
+				writeJSONError(w, http.StatusInternalServerError, "internal_error", "Verification succeeded but the age restriction could not be recorded")
+				return
+			}
 			h.auditor.Log(ctx, audit.AuditEvent{
 				Plane: audit.PlaneB, Action: audit.ActionAgeGateBlocked, Actor: subjectID.String(),
 				ActorType: audit.ActorTypeUser, ResourceType: "government_id", SubjectID: &subjectID,
@@ -335,6 +375,8 @@ func (h *VerificationHandler) GovernmentIDVerify(w http.ResponseWriter, r *http.
 		"status":         models.VerificationStatusVerified,
 		"verifiedName":   result.VerifiedName,
 		"hasDateOfBirth": result.DateOfBirth != nil,
+		"ageStatus":      details["ageStatus"],
+		"ageBlocked":     details["ageStatus"] == policy.AgeStatusUnderage,
 	})
 }
 
@@ -363,8 +405,7 @@ func (h *VerificationHandler) LivenessVerify(w http.ResponseWriter, r *http.Requ
 		Frame                 string `json:"frame"`
 		GovernmentIDReference string `json:"governmentIdReference"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "bad_request", "Invalid request body")
+	if !decodeUploadBody(w, r, &req) {
 		return
 	}
 	frame, err := base64.StdEncoding.DecodeString(stripDataURI(req.Frame))
@@ -415,7 +456,13 @@ func (h *VerificationHandler) LivenessVerify(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := h.verifs.MarkVerified(ctx, subjectID, models.VerificationTypeLiveness); err != nil {
+		// Same reasoning as the ID path: if the subject flag cannot be set, the
+		// rest of the system will not see the verification, so do not report
+		// success.
 		h.logger.Error("mark liveness verified failed", zap.Error(err))
+		h.completeVerification(ctx, verificationID, "", models.VerificationStatusFailed, "could not record verified state", result.CostUSD, details)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Verification succeeded but could not be recorded")
+		return
 	}
 	h.completeVerification(ctx, verificationID, subjectID.String(), models.VerificationStatusVerified, "", result.CostUSD, details)
 
@@ -450,8 +497,7 @@ func (h *VerificationHandler) ImageVerify(w http.ResponseWriter, r *http.Request
 	var req struct {
 		Image string `json:"image"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "bad_request", "Invalid request body")
+	if !decodeUploadBody(w, r, &req) {
 		return
 	}
 	image, err := base64.StdEncoding.DecodeString(stripDataURI(req.Image))
@@ -464,17 +510,22 @@ func (h *VerificationHandler) ImageVerify(w http.ResponseWriter, r *http.Request
 
 	var reverseResult *verification.ReverseImageResult
 	var syntheticResult *verification.SyntheticImageResult
+	var reverseFailed, syntheticFailed bool
 
 	if h.cfg.ReverseImageConfigured() {
 		reverseResult, err = h.service.reverse.Search(ctx, image)
 		if err != nil {
+			// A provider failure is not evidence of a clean image. Record that the
+			// check did not complete so the caller never sees a false clean result.
 			h.logger.Warn("reverse image search failed", zap.Error(err))
+			reverseFailed = true
 		}
 	}
 	if h.cfg.SyntheticConfigured() {
 		syntheticResult, err = h.service.synthetic.Detect(ctx, image)
 		if err != nil {
 			h.logger.Warn("synthetic image detection failed", zap.Error(err))
+			syntheticFailed = true
 		}
 	}
 
@@ -501,22 +552,39 @@ func (h *VerificationHandler) ImageVerify(w http.ResponseWriter, r *http.Request
 	if record.ReverseMatchCount > 0 {
 		reasonCodes = append(reasonCodes, models.ReasonCodeImageReverseMatch)
 	}
-	if len(reasonCodes) == 0 {
+
+	// A failure only counts as "incomplete" when it could change the verdict. A
+	// clean image requires every configured check to have completed, so a failed
+	// reverse-image search cannot be reported as IMAGE_VERIFIED_CLEAN.
+	incomplete := (reverseFailed && record.ReverseMatchCount == 0) || (syntheticFailed && !record.IsSynthetic)
+	switch {
+	case len(reasonCodes) > 0:
+		// A positive finding stands on its own even if the other check failed.
+	case incomplete:
+		reasonCodes = append(reasonCodes, models.ReasonCodeImageCheckIncomplete)
+	default:
 		reasonCodes = append(reasonCodes, models.ReasonCodeImageClean)
 	}
 
 	h.auditor.Log(ctx, audit.AuditEvent{
 		Plane: audit.PlaneB, Action: audit.ActionVerificationCompleted, Actor: subjectID.String(),
 		ActorType: audit.ActorTypeUser, ResourceType: "image", SubjectID: &subjectID,
-		Details: map[string]interface{}{"isSynthetic": record.IsSynthetic, "matchCount": record.ReverseMatchCount},
-		Result:  "ok", RequestID: r.Header.Get("X-Request-ID"),
+		Details: map[string]interface{}{
+			"isSynthetic":     record.IsSynthetic,
+			"matchCount":      record.ReverseMatchCount,
+			"reverseFailed":   reverseFailed,
+			"syntheticFailed": syntheticFailed,
+		},
+		Result: "ok", RequestID: r.Header.Get("X-Request-ID"),
 	})
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"imageHash":      imageHash,
-		"isSynthetic":    record.IsSynthetic,
-		"reverseMatches": record.ReverseMatchCount,
-		"reasonCodes":    reasonCodes,
+		"imageHash":         imageHash,
+		"isSynthetic":       record.IsSynthetic,
+		"reverseMatches":    record.ReverseMatchCount,
+		"reverseComplete":   !reverseFailed,
+		"syntheticComplete": !syntheticFailed,
+		"reasonCodes":       reasonCodes,
 	})
 }
 

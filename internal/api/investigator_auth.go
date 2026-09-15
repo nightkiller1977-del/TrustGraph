@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/nightkiller1977-del/trustgraph/internal/config"
+	"github.com/nightkiller1977-del/trustgraph/internal/models"
 )
 
 // Investigator roles, from least to most privileged.
@@ -36,14 +37,22 @@ const (
 //
 // The deployment is configured with a single INVESTIGATOR_TOKEN whose role is
 // "investigator" (the common case: one shared service account for the
-// investigation console). The token is compared in constant time. When the
-// token is unset the endpoint is unavailable (503) rather than open, matching
-// how the admin routes refuse to run unconfigured.
+// investigation console), and optionally an ADMIN_TOKEN that maps to
+// "supervisor". Both are compared in constant time. The endpoint is
+// unavailable (503) only when neither is set, matching how the admin routes
+// refuse to run unconfigured.
+//
+// Actor identity: with a shared token there is no per-user identity to derive
+// an actor from, so X-Investigator-Actor is honoured ONLY when the deployment
+// declares a trusted identity-aware proxy in front of the service
+// (TrustedProxyActorHeader). Otherwise every action is attributed to the
+// token's own identity, so one investigator cannot forge another's audit
+// trail. The actor is never taken from an untrusted caller.
 func investigatorAuth(cfg *config.Config, logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !cfg.InvestigatorsConfigured() {
-				logger.Error("investigator endpoint called but INVESTIGATOR_TOKEN is not set")
+				logger.Error("investigator endpoint called but neither INVESTIGATOR_TOKEN nor ADMIN_TOKEN is set")
 				writeJSONError(w, http.StatusServiceUnavailable, "not_configured", "Investigator access is not configured")
 				return
 			}
@@ -56,21 +65,31 @@ func investigatorAuth(cfg *config.Config, logger *zap.Logger) func(http.Handler)
 			token := strings.TrimPrefix(auth, "Bearer ")
 
 			role := RoleInvestigatorViewer
+			actor := ""
 			switch {
-			case subtle.ConstantTimeCompare([]byte(token), []byte(cfg.InvestigatorToken)) == 1:
+			case cfg.InvestigatorToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(cfg.InvestigatorToken)) == 1:
 				role = RoleInvestigatorInvestigator
+				actor = "investigator"
 			case cfg.AdminToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(cfg.AdminToken)) == 1:
 				// An admin token is also accepted, at supervisor level.
 				role = RoleInvestigatorSupervisor
+				actor = "admin"
 			default:
 				logger.Warn("investigator auth failed", zap.String("remote_addr", r.RemoteAddr))
 				writeJSONError(w, http.StatusForbidden, "forbidden", "Invalid investigator token")
 				return
 			}
 
-			actor := r.Header.Get("X-Investigator-Actor")
-			if actor == "" {
-				actor = "investigator"
+			// A per-request actor is only trustworthy when an identity-aware
+			// proxy sets it; otherwise it is caller-controlled and would let one
+			// investigator impersonate another in the audit trail.
+			if cfg.TrustedProxyActorHeader {
+				if proxyActor := r.Header.Get("X-Investigator-Actor"); proxyActor != "" {
+					actor = proxyActor
+				}
+			} else if r.Header.Get("X-Investigator-Actor") != "" {
+				logger.Warn("ignoring X-Investigator-Actor: no trusted proxy is configured to set it",
+					zap.String("remote_addr", r.RemoteAddr))
 			}
 
 			ctx := context.WithValue(r.Context(), ctxKeyInvestigatorActor, actor)
@@ -103,6 +122,46 @@ func requireRole(ctx context.Context, w http.ResponseWriter, minimum string) boo
 	if roleRank(investigatorRole(ctx)) >= roleRank(minimum) {
 		return true
 	}
+	writeJSONError(w, http.StatusForbidden, "forbidden", "Your investigator role does not permit this action")
+	return false
+}
+
+// breakGlassStore is the slice of the case store requireRole needs to honour an
+// active emergency grant. It is an interface so the middleware can be tested
+// without a database.
+type breakGlassStore interface {
+	ActiveBreakGlassGrant(ctx context.Context, actor string) (*models.BreakGlassGrant, error)
+}
+
+// requireRoleOrBreakGlass enforces a minimum role, but also permits the action
+// when the caller holds an unexpired, unrevoked break-glass grant. Without this
+// the grant would be recorded and audited yet have no effect, leaving the
+// emergency path non-functional.
+//
+// A grant confers supervisor-level access for its window: its whole purpose is
+// elevation beyond the caller's standing role, so the role recorded at request
+// time must not cap it. Every elevation is logged, because using a break-glass
+// grant is exactly the event the audit trail exists to capture.
+func requireRoleOrBreakGlass(ctx context.Context, w http.ResponseWriter, minimum string, cases breakGlassStore, logger *zap.Logger) bool {
+	if roleRank(investigatorRole(ctx)) >= roleRank(minimum) {
+		return true
+	}
+
+	if cases != nil {
+		actor := investigatorActor(ctx)
+		grant, err := cases.ActiveBreakGlassGrant(ctx, actor)
+		if err != nil {
+			logger.Error("break-glass lookup failed", zap.Error(err))
+		} else if grant != nil {
+			logger.Warn("privileged action authorised by break-glass grant",
+				zap.String("actor", actor),
+				zap.String("required_role", minimum),
+				zap.String("grant_id", grant.GrantID),
+			)
+			return true
+		}
+	}
+
 	writeJSONError(w, http.StatusForbidden, "forbidden", "Your investigator role does not permit this action")
 	return false
 }

@@ -265,6 +265,60 @@ func TestCreateAssessment_UnderageSubject_IsDeniedAndAudited(t *testing.T) {
 	assert.NoError(t, mock.ExpectationsWereMet())
 }
 
+// TestCreateAssessment_SubjectDateOfBirthIsHonoured pins the OpenAPI contract
+// shape: dateOfBirth is documented on the subject, so an underage value there
+// must reach the age gate. Reading only signals.dateOfBirth would let a
+// documented request pass as AGE_UNKNOWN.
+func TestCreateAssessment_SubjectDateOfBirthIsHonoured(t *testing.T) {
+	handler, mock := newTestHandler(t)
+
+	newSubjectID := uuid.New()
+	newAssessmentID := uuid.New()
+
+	mock.ExpectQuery(pIdempotencyLookup).WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec(pSubjectUpsert).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery(pSubjectSelect).
+		WillReturnRows(sqlmock.NewRows([]string{"subject_id"}).AddRow(newSubjectID.String()))
+	// assessment.requested
+	mock.ExpectExec(pAuditLogInsert).WillReturnResult(sqlmock.NewResult(0, 1))
+	for i := 0; i < 6; i++ {
+		mock.ExpectExec(pAuditLogInsert).WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	mock.ExpectBegin()
+	mock.ExpectExec(pAdvisoryLock).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(pIdempotencyLookup).WillReturnError(sql.ErrNoRows)
+	mock.ExpectQuery(pCreateAssessment).
+		WillReturnRows(sqlmock.NewRows([]string{"assessment_id"}).AddRow(newAssessmentID.String()))
+	mock.ExpectCommit()
+	mock.ExpectExec(pRecordObservation).WillReturnResult(sqlmock.NewResult(0, 1))
+	// assessment.completed
+	mock.ExpectExec(pAuditLogInsert).WillReturnResult(sqlmock.NewResult(0, 1))
+
+	rec := doCreateAssessment(t, handler, map[string]interface{}{
+		"contractVersion": "v1",
+		"idempotencyKey":  "idem-subject-dob",
+		"subject": map[string]interface{}{
+			"connectionSphereUserId": "cs-subject-dob",
+			"email":                  "user@example.com",
+			"dateOfBirth":            time.Now().AddDate(-13, 0, 0).Format("2006-01-02"),
+		},
+		"signals": map[string]interface{}{
+			"emailVerified": true,
+			"phoneVerified": true,
+		},
+	})
+
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp models.AssessmentResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Equal(t, "deny", resp.Decision, "a documented subject.dateOfBirth must reach the age gate")
+	assert.Contains(t, resp.ReasonCodes, models.ReasonCodeUnderageUser)
+	assert.Contains(t, resp.RequiredActions, models.RequiredActionBlockAccount)
+
+	assert.NoError(t, mock.ExpectationsWereMet())
+}
+
 // TestCreateAssessment_MalformedDateOfBirth_Returns400 pins the decision to
 // reject unparseable dates rather than silently dropping them, which would let
 // a caller bypass the age gate with a bad payload.

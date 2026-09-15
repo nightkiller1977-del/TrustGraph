@@ -64,12 +64,19 @@ func main() {
 	// Initialize API server
 	router := api.NewRouter(db, logger, &cfg)
 
+	// WriteTimeout must outlast the longest handler timeout: the OSINT query
+	// handler allows 3 minutes and the liveness flow 90 seconds, so a 15-second
+	// write timeout would cut vendor calls off mid-flight and return a truncated
+	// or empty response. ReadHeaderTimeout (not ReadTimeout) carries the
+	// slowloris protection, since a long vendor call must be allowed to write its
+	// response without being killed by a short read deadline on the request body.
 	server := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              ":" + cfg.Port,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      4 * time.Minute,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	// Graceful shutdown

@@ -229,15 +229,18 @@ type SubjectVerificationFlags struct {
 	HasGovernmentID bool
 	HasLiveness     bool
 	VerifiedAt      *time.Time
+	AgeBlocked      bool
+	AgeBlockedAt    *time.Time
 }
 
 // GetSubjectVerificationFlags loads the subject-level flags.
 func (r *VerificationRepository) GetSubjectVerificationFlags(ctx context.Context, subjectID uuid.UUID) (*SubjectVerificationFlags, error) {
-	query := `SELECT has_government_id, has_liveness, verified_at FROM subject WHERE subject_id = $1`
+	query := `SELECT has_government_id, has_liveness, verified_at, age_blocked, age_blocked_at FROM subject WHERE subject_id = $1`
 
 	var flags SubjectVerificationFlags
-	var verifiedAt sql.NullTime
-	err := r.db.QueryRowContext(ctx, query, subjectID).Scan(&flags.HasGovernmentID, &flags.HasLiveness, &verifiedAt)
+	var verifiedAt, ageBlockedAt sql.NullTime
+	err := r.db.QueryRowContext(ctx, query, subjectID).Scan(
+		&flags.HasGovernmentID, &flags.HasLiveness, &verifiedAt, &flags.AgeBlocked, &ageBlockedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -247,5 +250,21 @@ func (r *VerificationRepository) GetSubjectVerificationFlags(ctx context.Context
 	if verifiedAt.Valid {
 		flags.VerifiedAt = &verifiedAt.Time
 	}
+	if ageBlockedAt.Valid {
+		flags.AgeBlockedAt = &ageBlockedAt.Time
+	}
 	return &flags, nil
+}
+
+// SetAgeBlock records an authoritative underage finding against the subject.
+// The identity verification itself stands; this flag is the enforceable age
+// restriction that capability gating and status reads consume.
+func (r *VerificationRepository) SetAgeBlock(ctx context.Context, subjectID uuid.UUID, source string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE subject SET age_blocked = true, age_blocked_at = now(), age_blocked_source = $2 WHERE subject_id = $1`,
+		subjectID, source)
+	if err != nil {
+		return fmt.Errorf("set age block: %w", err)
+	}
+	return nil
 }

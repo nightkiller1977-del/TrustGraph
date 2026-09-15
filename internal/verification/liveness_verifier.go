@@ -116,10 +116,12 @@ func (c *LivenessVerifierClient) Verify(ctx context.Context, req LivenessRequest
 		FailureReason:   decoded.FailureReason,
 	}
 
-	// A vendor can return status "verified" with a low score, or omit the
-	// status entirely. The score is the authoritative signal, so derive the
-	// final status from it rather than trusting the label.
-	if result.Status == "" || result.Status == "verified" {
+	// Normalise the vendor label first: a success may be reported as
+	// "passed"/"approved"/"completed"/"verified", and an empty status means the
+	// vendor omitted it. The score is the authoritative signal, so once the
+	// status is known to be a success (or absent) derive the final status from
+	// the score rather than trusting the label.
+	if normalized := mapVendorStatus(result.Status); normalized == "verified" || result.Status == "" {
 		if decoded.LivenessScore >= DefaultLivenessThreshold {
 			result.Status = "verified"
 		} else {
@@ -128,6 +130,8 @@ func (c *LivenessVerifierClient) Verify(ctx context.Context, req LivenessRequest
 				result.FailureReason = fmt.Sprintf("liveness score %.2f below threshold %.2f", decoded.LivenessScore, DefaultLivenessThreshold)
 			}
 		}
+	} else if normalized != "" {
+		result.Status = normalized
 	}
 
 	return result, nil

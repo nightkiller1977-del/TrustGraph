@@ -114,7 +114,7 @@ func TestIntegration_ConsentLifecycle(t *testing.T) {
 	err = consents.RequireConsent(ctx, subjectID, "B", models.ConsentTypeGovernmentID)
 	assert.ErrorIs(t, err, ErrConsentRequired)
 
-	_, err = consents.WithdrawConsent(ctx, subjectID, "B", models.ConsentTypeLinkedIn)
+	_, err = consents.WithdrawConsentAndEraseData(ctx, subjectID, "B", models.ConsentTypeLinkedIn)
 	require.NoError(t, err)
 	err = consents.RequireConsent(ctx, subjectID, "B", models.ConsentTypeLinkedIn)
 	assert.ErrorIs(t, err, ErrConsentRequired, "withdrawn consent must stop being usable")
@@ -349,11 +349,10 @@ func TestIntegration_ScopedEraseLeavesOtherPurposesIntact(t *testing.T) {
 		SubjectID: subjectID, ImageHash: "hash-scoped", ReverseProvider: "tineye",
 	}))
 
-	// Withdraw only the image purpose, mirroring the handler sequence: the
-	// status flip and the data erase are two steps.
-	_, err = consents.WithdrawConsent(ctx, subjectID, "B", models.ConsentTypeImageVerification)
+	// Withdraw only the image purpose, mirroring the handler call: the status
+	// flip and the data erase happen in one transaction.
+	_, err = consents.WithdrawConsentAndEraseData(ctx, subjectID, "B", models.ConsentTypeImageVerification)
 	require.NoError(t, err)
-	require.NoError(t, consents.DeleteSubjectPlaneBDataForConsent(ctx, subjectID, models.ConsentTypeImageVerification))
 
 	var imageRows int
 	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM image_verification WHERE subject_id = $1`, subjectID).Scan(&imageRows))
@@ -407,14 +406,16 @@ func TestIntegration_ScopedEraseRefreshesFlagsFromSurvivors(t *testing.T) {
 	// Withdrawing an unrelated purpose must leave the government-ID badge up.
 	_, err = consents.GrantConsent(ctx, subjectID, "B", models.ConsentTypeImageVerification, "policy-v1", nil)
 	require.NoError(t, err)
-	require.NoError(t, consents.DeleteSubjectPlaneBDataForConsent(ctx, subjectID, models.ConsentTypeImageVerification))
+	_, err = consents.WithdrawConsentAndEraseData(ctx, subjectID, "B", models.ConsentTypeImageVerification)
+	require.NoError(t, err)
 
 	flags, err = verifications.GetSubjectVerificationFlags(ctx, subjectID)
 	require.NoError(t, err)
 	assert.True(t, flags.HasGovernmentID, "unrelated withdrawal must not un-verify a government ID")
 
 	// Withdrawing the government-ID purpose itself must clear the badge.
-	require.NoError(t, consents.DeleteSubjectPlaneBDataForConsent(ctx, subjectID, models.ConsentTypeGovernmentID))
+	_, err = consents.WithdrawConsentAndEraseData(ctx, subjectID, "B", models.ConsentTypeGovernmentID)
+	require.NoError(t, err)
 
 	flags, err = verifications.GetSubjectVerificationFlags(ctx, subjectID)
 	require.NoError(t, err)
@@ -437,6 +438,153 @@ func TestIntegration_ScopedEraseRejectsUnknownConsentType(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// TestIntegration_WithdrawRetryAfterPartialFailureErasesData covers the retry
+// case the atomic withdrawal exists to support: if the data erase failed after
+// the status flip, a second call must still remove the data rather than
+// returning "no active consent" and leaving PII behind.
+func TestIntegration_WithdrawRetryErasesData(t *testing.T) {
+	db := testDB(t)
+	subjects := NewSubjectRepository(db)
+	consents := NewConsentRepository(db)
+	verifications := NewVerificationRepository(db)
+	ctx := context.Background()
+
+	subjectID, err := subjects.FindOrCreateSubject(ctx, "cs_user_retry")
+	require.NoError(t, err)
+
+	_, err = consents.GrantConsent(ctx, subjectID, "B", models.ConsentTypeImageVerification, "policy-v1", nil)
+	require.NoError(t, err)
+	require.NoError(t, verifications.RecordImageVerification(ctx, &ImageVerificationRecord{
+		SubjectID: subjectID, ImageHash: "hash-retry", ReverseProvider: "tineye",
+	}))
+
+	// First withdrawal flips the status and erases in one transaction.
+	_, err = consents.WithdrawConsentAndEraseData(ctx, subjectID, "B", models.ConsentTypeImageVerification)
+	require.NoError(t, err)
+
+	// Simulate the state a partial failure would have left: consent withdrawn but
+	// data still present.
+	require.NoError(t, verifications.RecordImageVerification(ctx, &ImageVerificationRecord{
+		SubjectID: subjectID, ImageHash: "hash-retry-2", ReverseProvider: "tineye",
+	}))
+
+	consent, err := consents.WithdrawConsentAndEraseData(ctx, subjectID, "B", models.ConsentTypeImageVerification)
+	require.NoError(t, err)
+	require.NotNil(t, consent, "an already-withdrawn consent must still be erasable, not a 404")
+
+	var rows int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM image_verification WHERE subject_id = $1`, subjectID).Scan(&rows))
+	assert.Equal(t, 0, rows, "a retried withdrawal must erase data left behind by a partial failure")
+}
+
+// TestIntegration_WithdrawLinkedInErasesEducation pins the purpose-scoped erase
+// for data sourced from LinkedIn OAuth: employment and education both go, and
+// the education badge cannot survive the withdrawal that supposedly deleted it.
+func TestIntegration_WithdrawLinkedInErasesEducation(t *testing.T) {
+	db := testDB(t)
+	subjects := NewSubjectRepository(db)
+	consents := NewConsentRepository(db)
+	ctx := context.Background()
+
+	subjectID, err := subjects.FindOrCreateSubject(ctx, "cs_user_edu_erase")
+	require.NoError(t, err)
+	_, err = consents.GrantConsent(ctx, subjectID, "B", models.ConsentTypeLinkedIn, "policy-v1", nil)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`INSERT INTO subject_education (subject_id, school_name, field_of_study) VALUES ($1, $2, $3)`,
+		subjectID, "Example University", "Computer Science")
+	require.NoError(t, err)
+
+	_, err = consents.WithdrawConsentAndEraseData(ctx, subjectID, "B", models.ConsentTypeLinkedIn)
+	require.NoError(t, err)
+
+	var eduRows int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM subject_education WHERE subject_id = $1`, subjectID).Scan(&eduRows))
+	assert.Equal(t, 0, eduRows, "LinkedIn withdrawal must erase education sourced from the OAuth profile")
+}
+
+// TestIntegration_ConsentListReturnsTerms covers the contract that the consent
+// list and status reads expose the terms that were accepted, not just the grant
+// response.
+func TestIntegration_ConsentListReturnsTerms(t *testing.T) {
+	db := testDB(t)
+	subjects := NewSubjectRepository(db)
+	consents := NewConsentRepository(db)
+	ctx := context.Background()
+
+	subjectID, err := subjects.FindOrCreateSubject(ctx, "cs_user_terms")
+	require.NoError(t, err)
+
+	terms := map[string]interface{}{"tosVersion": "2.1", "privacyVersion": "1.4"}
+	_, err = consents.GrantConsent(ctx, subjectID, "B", models.ConsentTypeGovernmentID, "policy-v1", terms)
+	require.NoError(t, err)
+
+	listed, err := consents.ListBySubject(ctx, subjectID)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	require.NotNil(t, listed[0].TermsAccepted, "the terms accepted must be returned by the list query")
+	assert.Equal(t, "2.1", listed[0].TermsAccepted["tosVersion"])
+	assert.Equal(t, "1.4", listed[0].TermsAccepted["privacyVersion"])
+}
+
+// TestIntegration_ReopenCaseClearsClosedAt guards the lifecycle timestamp: a
+// reopened case must not still look closed at an earlier time.
+func TestIntegration_ReopenCaseClearsClosedAt(t *testing.T) {
+	db := testDB(t)
+	subjects := NewSubjectRepository(db)
+	cases := NewInvestigationRepository(db)
+	ctx := context.Background()
+
+	subjectID, err := subjects.FindOrCreateSubject(ctx, "cs_user_reopen")
+	require.NoError(t, err)
+
+	created, err := cases.CreateCase(ctx, models.CaseCreateRequest{
+		SubjectID: subjectID.String(),
+		Title:     "Reopen me",
+		Priority:  models.CasePriorityNormal,
+	}, "investigator@example.com")
+	require.NoError(t, err)
+
+	caseID, err := uuid.Parse(created.CaseID)
+	require.NoError(t, err)
+
+	closed := models.CaseStatusClosed
+	updated, err := cases.UpdateCase(ctx, caseID, models.CaseUpdateRequest{Status: &closed})
+	require.NoError(t, err)
+	require.NotNil(t, updated.ClosedAt, "closing must stamp closed_at")
+
+	reopened := models.CaseStatusOpen
+	updated, err = cases.UpdateCase(ctx, caseID, models.CaseUpdateRequest{Status: &reopened})
+	require.NoError(t, err)
+	assert.Nil(t, updated.ClosedAt, "reopening must clear closed_at")
+}
+
+// TestIntegration_AgeBlockPersists covers the authoritative underage finding:
+// it must survive the request that discovered it so capability gating can read
+// it from the subject flags.
+func TestIntegration_AgeBlockPersists(t *testing.T) {
+	db := testDB(t)
+	subjects := NewSubjectRepository(db)
+	verifications := NewVerificationRepository(db)
+	ctx := context.Background()
+
+	subjectID, err := subjects.FindOrCreateSubject(ctx, "cs_user_age_block")
+	require.NoError(t, err)
+
+	require.NoError(t, verifications.SetAgeBlock(ctx, subjectID, "government_id_verification"))
+
+	flags, err := verifications.GetSubjectVerificationFlags(ctx, subjectID)
+	require.NoError(t, err)
+	assert.True(t, flags.AgeBlocked, "a verified underage outcome must be persisted")
+	require.NotNil(t, flags.AgeBlockedAt)
+
+	// A full Plane B erase removes the restriction with the rest of the data.
+	require.NoError(t, NewConsentRepository(db).DeleteSubjectPlaneBData(ctx, subjectID))
+	flags, err = verifications.GetSubjectVerificationFlags(ctx, subjectID)
+	require.NoError(t, err)
+	assert.False(t, flags.AgeBlocked, "erasing Plane B data must clear the age restriction")
+}
 
 func TestIntegration_GovernmentIDAndLivenessRecords(t *testing.T) {
 	db := testDB(t)

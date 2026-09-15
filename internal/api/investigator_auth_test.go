@@ -58,12 +58,76 @@ func TestInvestigatorAuth_InvestigatorTokenGrantsInvestigatorRole(t *testing.T) 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Authorization", "Bearer inv-token")
-	req.Header.Set("X-Investigator-Actor", "alice@example.com")
 	handler.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, RoleInvestigatorInvestigator, gotRole)
+	assert.Equal(t, "investigator", gotActor)
+}
+
+// TestInvestigatorAuth_IgnoresCallerSuppliedActor pins the fix for a forged
+// audit trail: without a trusted proxy the X-Investigator-Actor header is
+// caller-controlled and must not become the recorded actor.
+func TestInvestigatorAuth_IgnoresCallerSuppliedActor(t *testing.T) {
+	cfg := &config.Config{InvestigatorToken: "inv-token"}
+	var gotActor string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotActor = investigatorActor(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := investigatorAuth(cfg, zap.NewNop())(next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer inv-token")
+	req.Header.Set("X-Investigator-Actor", "mallory@example.com")
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "investigator", gotActor)
+}
+
+// TestInvestigatorAuth_TrustedProxyActorHonoured covers the deployment that
+// declares an identity-aware proxy: there the header is the human identity and
+// is used verbatim.
+func TestInvestigatorAuth_TrustedProxyActorHonoured(t *testing.T) {
+	cfg := &config.Config{InvestigatorToken: "inv-token", TrustedProxyActorHeader: true}
+	var gotActor string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotActor = investigatorActor(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := investigatorAuth(cfg, zap.NewNop())(next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer inv-token")
+	req.Header.Set("X-Investigator-Actor", "alice@example.com")
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "alice@example.com", gotActor)
+}
+
+// TestInvestigatorAuth_AdminTokenOnlyIsConfigured covers an admin-only
+// deployment: Plane C must be reachable with ADMIN_TOKEN rather than returning
+// 503 because INVESTIGATOR_TOKEN is unset.
+func TestInvestigatorAuth_AdminTokenOnlyIsConfigured(t *testing.T) {
+	cfg := &config.Config{AdminToken: "admin-token"}
+	var gotRole string
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRole = investigatorRole(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})
+	handler := investigatorAuth(cfg, zap.NewNop())(next)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer admin-token")
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, RoleInvestigatorSupervisor, gotRole)
 }
 
 func TestInvestigatorAuth_AdminTokenGrantsSupervisorRole(t *testing.T) {

@@ -27,22 +27,29 @@ func NewRouter(db *store.PostgresDB, logger *zap.Logger, cfg *config.Config) *mu
 	appealHandler := NewAppealHandler(db, logger)
 	v1.HandleFunc("/appeals/{assessmentId}", appealHandler.SubmitAppeal).Methods("POST")
 
-	// Plane B: consent and verification (user-facing, subject-scoped)
+	// Plane B: consent and verification. Every subject-scoped route is
+	// authenticated and bound to the path subject, so one caller cannot read or
+	// erase another subject's data. The OAuth callback has no subject path and
+	// is protected by its single-use CSRF state instead.
 	verificationHandler := NewVerificationHandler(db, logger, cfg)
-	verify := v1.PathPrefix("/verification").Subrouter()
-	verify.HandleFunc("/subjects/{csUserId}/consents", verificationHandler.ListConsents).Methods("GET")
-	verify.HandleFunc("/subjects/{csUserId}/consents", verificationHandler.GrantConsent).Methods("POST")
-	verify.HandleFunc("/subjects/{csUserId}/consents/{consentType}", verificationHandler.WithdrawConsent).Methods("DELETE")
-	verify.HandleFunc("/subjects/{csUserId}/status", verificationHandler.VerifiedStatus).Methods("GET")
-	verify.HandleFunc("/subjects/{csUserId}/badges", verificationHandler.GetBadges).Methods("GET")
-	verify.HandleFunc("/subjects/{csUserId}", verificationHandler.DeleteVerification).Methods("DELETE")
+	verify := v1.PathPrefix("/verification/subjects").Subrouter()
+	verify.Use(requireSubjectAuth(cfg, logger))
+	verify.HandleFunc("/{csUserId}/consents", verificationHandler.ListConsents).Methods("GET")
+	verify.HandleFunc("/{csUserId}/consents", verificationHandler.GrantConsent).Methods("POST")
+	verify.HandleFunc("/{csUserId}/consents/{consentType}", verificationHandler.WithdrawConsent).Methods("DELETE")
+	verify.HandleFunc("/{csUserId}/status", verificationHandler.VerifiedStatus).Methods("GET")
+	verify.HandleFunc("/{csUserId}/badges", verificationHandler.GetBadges).Methods("GET")
+	verify.HandleFunc("/{csUserId}", verificationHandler.DeleteVerification).Methods("DELETE")
 
 	// Plane B verification flows
-	verify.HandleFunc("/subjects/{csUserId}/linkedin/authorize", verificationHandler.LinkedInAuthorize).Methods("POST")
-	verify.HandleFunc("/linkedin/callback", verificationHandler.LinkedInCallback).Methods("GET")
-	verify.HandleFunc("/subjects/{csUserId}/government-id", verificationHandler.GovernmentIDVerify).Methods("POST")
-	verify.HandleFunc("/subjects/{csUserId}/liveness", verificationHandler.LivenessVerify).Methods("POST")
-	verify.HandleFunc("/subjects/{csUserId}/image", verificationHandler.ImageVerify).Methods("POST")
+	verify.HandleFunc("/{csUserId}/linkedin/authorize", verificationHandler.LinkedInAuthorize).Methods("POST")
+	verify.HandleFunc("/{csUserId}/government-id", verificationHandler.GovernmentIDVerify).Methods("POST")
+	verify.HandleFunc("/{csUserId}/liveness", verificationHandler.LivenessVerify).Methods("POST")
+	verify.HandleFunc("/{csUserId}/image", verificationHandler.ImageVerify).Methods("POST")
+
+	// OAuth callback: reached by the browser redirect from LinkedIn, protected by
+	// the single-use state minted during authorize.
+	v1.HandleFunc("/verification/linkedin/callback", verificationHandler.LinkedInCallback).Methods("GET")
 
 	// Admin endpoints — require Bearer token
 	adminAuth := requireAdminAuth(cfg, logger)

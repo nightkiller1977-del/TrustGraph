@@ -195,6 +195,7 @@ func (r *InvestigationRepository) UpdateCase(ctx context.Context, caseID uuid.UU
 			resolution = COALESCE($6, resolution),
 			closed_at = CASE
 				WHEN $2 IN ('closed', 'resolved') AND closed_at IS NULL THEN now()
+				WHEN $2 IN ('open', 'investigating', 'escalated') THEN NULL
 				ELSE closed_at
 			END,
 			updated_at = now()

@@ -154,7 +154,11 @@ func (h *VerificationHandler) WithdrawConsent(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	consent, err := h.consents.WithdrawConsent(ctx, subjectID, audit.PlaneB, consentType)
+	// Withdrawal and erasure run in one transaction: a withdrawn consent must
+	// take its data with it, and a partial failure must not leave a revoked
+	// consent whose data survives. The store erases only this purpose's data, so
+	// withdrawing one purpose cannot destroy data the subject still consented to.
+	consent, err := h.consents.WithdrawConsentAndEraseData(ctx, subjectID, audit.PlaneB, consentType)
 	if err != nil {
 		h.logger.Error("withdraw consent failed", zap.Error(err))
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Failed to withdraw consent")
@@ -162,16 +166,6 @@ func (h *VerificationHandler) WithdrawConsent(w http.ResponseWriter, r *http.Req
 	}
 	if consent == nil {
 		writeJSONError(w, http.StatusNotFound, "not_found", "No active consent found for that type")
-		return
-	}
-
-	// A withdrawn consent must take its data with it, otherwise "withdraw" would
-	// leave the subject's data in place while claiming it was revoked. The erase
-	// is scoped to this consent type so withdrawing one purpose cannot destroy
-	// data the subject still consented to.
-	if err := h.consents.DeleteSubjectPlaneBDataForConsent(ctx, subjectID, consentType); err != nil {
-		h.logger.Error("plane B data deletion failed", zap.Error(err))
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Consent withdrawn but data deletion failed; retry required")
 		return
 	}
 
@@ -219,10 +213,18 @@ func (h *VerificationHandler) VerifiedStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	writeJSON(w, http.StatusOK, models.VerificationStatusResponse{
-		SubjectID:     subjectID.String(),
-		Consents:      consents,
-		Verifications: verifications,
+	flags, err := h.verifs.GetSubjectVerificationFlags(ctx, subjectID)
+	if err != nil {
+		h.logger.Error("verification flags lookup failed", zap.Error(err))
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Failed to load verification status")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"subjectId":     subjectID.String(),
+		"consents":      consents,
+		"verifications": verifications,
+		"ageBlocked":    flags != nil && flags.AgeBlocked,
 	})
 }
 
@@ -284,8 +286,9 @@ func (h *VerificationHandler) GetBadges(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"subjectId": subjectID.String(),
-		"badges":    badges,
+		"subjectId":  subjectID.String(),
+		"ageBlocked": flags != nil && flags.AgeBlocked,
+		"badges":     badges,
 	})
 }
 

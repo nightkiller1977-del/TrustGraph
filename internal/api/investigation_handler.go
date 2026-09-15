@@ -185,7 +185,7 @@ func (h *InvestigationHandler) UpdateCase(w http.ResponseWriter, r *http.Request
 	if closing {
 		required = RoleInvestigatorSupervisor
 	}
-	if !requireRole(ctx, w, required) {
+	if !requireRoleOrBreakGlass(ctx, w, required, h.cases, h.logger) {
 		return
 	}
 
@@ -324,10 +324,15 @@ func (h *InvestigationHandler) RunTool(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		record.Status = "error"
 		record.ErrorMessage = err.Error()
-		if logErr := h.cases.RecordToolQuery(ctx, record); logErr != nil {
+		// The tool deadline may have just expired, which is exactly the case
+		// worth auditing. Use a fresh bounded context so the query and audit
+		// rows are still written when ctx is already canceled.
+		bookkeepingCtx, bookkeepingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer bookkeepingCancel()
+		if logErr := h.cases.RecordToolQuery(bookkeepingCtx, record); logErr != nil {
 			h.logger.Error("record failed tool query", zap.Error(logErr))
 		}
-		h.auditor.Log(ctx, audit.AuditEvent{
+		h.auditor.Log(bookkeepingCtx, audit.AuditEvent{
 			Plane: audit.PlaneC, Action: audit.ActionInvestigationToolQueried,
 			Actor: actor, ActorType: audit.ActorTypeInvestigator,
 			ResourceType: "osint_tool",
@@ -443,7 +448,7 @@ func (h *InvestigationHandler) GetAccessLog(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if !requireRole(ctx, w, RoleInvestigatorSupervisor) {
+	if !requireRoleOrBreakGlass(ctx, w, RoleInvestigatorSupervisor, h.cases, h.logger) {
 		return
 	}
 

@@ -69,12 +69,17 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Parse the date of birth up front. A malformed date is a client error
-	// rather than something to be swallowed: silently ignoring it would let a
-	// bad payload skip the minimum-age gate entirely.
-	dob, err := policy.ParseDateOfBirth(req.Signals.DateOfBirth)
+	// Parse the date of birth up front. The OpenAPI contract places it on the
+	// subject; signals.dateOfBirth is also accepted for backward compatibility. A
+	// malformed date is a client error rather than something to be swallowed:
+	// silently ignoring it would let a bad payload skip the minimum-age gate.
+	dobValue := req.Subject.DateOfBirth
+	if dobValue == "" {
+		dobValue = req.Signals.DateOfBirth
+	}
+	dob, err := policy.ParseDateOfBirth(dobValue)
 	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "bad_request", "signals.dateOfBirth must be an ISO-8601 date (YYYY-MM-DD)")
+		h.writeError(w, http.StatusBadRequest, "bad_request", "dateOfBirth must be an ISO-8601 date (YYYY-MM-DD)")
 		return
 	}
 

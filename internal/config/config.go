@@ -47,10 +47,22 @@ type Config struct {
 	SyntheticAPIKey     string `envconfig:"SYNTHETIC_IMAGE_API_KEY" default:""`
 	SyntheticBaseURL    string `envconfig:"SYNTHETIC_IMAGE_BASE_URL" default:""`
 
-	// Plane C: investigator authentication. When empty every investigator
-	// endpoint returns 503 so the tools cannot be reached without an explicit
-	// configuration. (An ADMIN_TOKEN is also accepted, at supervisor level.)
+	// Plane B: subject-scoped access. ConnectSphere authenticates with this
+	// bearer token and identifies the subject via X-ConnectionSphere-User-Id.
+	// When empty the Plane B routes return 503 rather than acting unauthenticated.
+	SubjectToken string `envconfig:"SUBJECT_TOKEN" default:""`
+
+	// Plane C: investigator authentication. When both this and ADMIN_TOKEN are
+	// empty every investigator endpoint returns 503 so the tools cannot be
+	// reached without an explicit configuration. (An ADMIN_TOKEN is also
+	// accepted, at supervisor level.)
 	InvestigatorToken string `envconfig:"INVESTIGATOR_TOKEN" default:""`
+
+	// TrustedProxyActorHeader declares that the service sits behind an
+	// identity-aware proxy which sets X-Investigator-Actor. Only then is that
+	// header trusted as the audit actor; otherwise it is caller-controlled and
+	// ignored, so one investigator cannot impersonate another.
+	TrustedProxyActorHeader bool `envconfig:"TRUSTED_PROXY_ACTOR_HEADER" default:"false"`
 
 	// Plane C: break-glass grants last this long before expiring. Kept short by
 	// default so emergency elevation cannot become a standing backdoor.
@@ -84,4 +96,8 @@ func (c *Config) ReverseImageConfigured() bool { return c.ReverseImageAPIKey != 
 func (c *Config) SyntheticConfigured() bool { return c.SyntheticAPIKey != "" }
 
 // InvestigatorsConfigured reports whether investigator access is provisioned.
-func (c *Config) InvestigatorsConfigured() bool { return c.InvestigatorToken != "" }
+// Either the investigator token or the admin token enables the endpoints; an
+// admin-only deployment must not be locked out of Plane C.
+func (c *Config) InvestigatorsConfigured() bool {
+	return c.InvestigatorToken != "" || c.AdminToken != ""
+}

@@ -21,6 +21,11 @@ type SubjectData struct {
 	ConnectionSphereUserID string `json:"connectionSphereUserId"`
 	Email                  string `json:"email,omitempty"`
 	Phone                  string `json:"phone,omitempty"`
+	// DateOfBirth is the subject's ISO-8601 calendar date of birth. It is the
+	// canonical location per the OpenAPI contract; SignalsData.DateOfBirth is
+	// also accepted for backward compatibility, with this field taking precedence
+	// when both are supplied.
+	DateOfBirth string `json:"dateOfBirth,omitempty"`
 }
 
 // SignalsData contains first-party signals available at registration
@@ -170,4 +175,7 @@ const (
 	ReasonCodeImageSynthetic       = "IMAGE_SYNTHETIC_SUSPECTED"
 	ReasonCodeImageReverseMatch    = "IMAGE_REVERSE_MATCH"
 	ReasonCodeImageClean           = "IMAGE_VERIFIED_CLEAN"
+	// ReasonCodeImageCheckIncomplete marks a run where a configured provider
+	// failed, so the image could not be confirmed clean.
+	ReasonCodeImageCheckIncomplete = "IMAGE_CHECK_INCOMPLETE"
 )
