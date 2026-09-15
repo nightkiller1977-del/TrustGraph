@@ -450,6 +450,21 @@ func (h *VerificationHandler) LivenessVerify(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// A liveness pass with a caller-supplied government-ID reference is only
+	// meaningful if the vendor confirms the live person is the document holder.
+	// A high score alone must not yield has_liveness when the vendor explicitly
+	// reported matched_identity: false.
+	if livenessIdentityMismatch(req.GovernmentIDReference, result.MatchedIdentity) {
+		const reason = "liveness succeeded but the live person did not match the supplied identity document"
+		h.completeVerification(ctx, verificationID, "", models.VerificationStatusFailed, reason, result.CostUSD, details)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"status":        models.VerificationStatusFailed,
+			"failureReason": reason,
+			"livenessScore": result.LivenessScore,
+		})
+		return
+	}
+
 	if err := h.verifs.RecordLiveness(ctx, subjectID, result); err != nil {
 		h.logger.Error("record liveness failed", zap.Error(err))
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Verification succeeded but could not be saved")
@@ -539,11 +554,6 @@ func (h *VerificationHandler) ImageVerify(w http.ResponseWriter, r *http.Request
 		SyntheticScore:    syntheticScore(syntheticResult),
 		IsSynthetic:       syntheticResult != nil && syntheticResult.IsSynthetic,
 	}
-	if err := h.verifs.RecordImageVerification(ctx, record); err != nil {
-		h.logger.Error("record image verification failed", zap.Error(err))
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Image verification could not be saved")
-		return
-	}
 
 	reasonCodes := []string{}
 	if record.IsSynthetic {
@@ -560,11 +570,49 @@ func (h *VerificationHandler) ImageVerify(w http.ResponseWriter, r *http.Request
 	switch {
 	case len(reasonCodes) > 0:
 		// A positive finding stands on its own even if the other check failed.
+		record.Status = models.VerificationStatusRejected
 	case incomplete:
 		reasonCodes = append(reasonCodes, models.ReasonCodeImageCheckIncomplete)
+		// The check did not complete, so the stored row must not read as a
+		// successful verification even though no adverse finding was recorded.
+		record.Status = models.VerificationStatusFailed
 	default:
 		reasonCodes = append(reasonCodes, models.ReasonCodeImageClean)
+		record.Status = models.VerificationStatusVerified
 	}
+
+	// The image flow is tracked in verification_token like the ID and liveness
+	// flows, so every attempt (successful, adverse, or incomplete) appears in the
+	// status API's verifications array.
+	verificationID, err := h.verifs.CreateVerification(ctx, subjectID, nil, models.VerificationTypeImage, "image", models.VerificationStatusProcessing)
+	if err != nil {
+		h.logger.Error("create image verification failed", zap.Error(err))
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Failed to start verification")
+		return
+	}
+
+	if err := h.verifs.RecordImageVerification(ctx, record); err != nil {
+		h.completeVerification(ctx, verificationID, "", models.VerificationStatusFailed, "could not record image verification", 0, nil)
+		h.logger.Error("record image verification failed", zap.Error(err))
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "Image verification could not be saved")
+		return
+	}
+
+	resultDetails := map[string]interface{}{
+		"imageHash":       imageHash,
+		"isSynthetic":     record.IsSynthetic,
+		"matchCount":      record.ReverseMatchCount,
+		"reverseFailed":   reverseFailed,
+		"syntheticFailed": syntheticFailed,
+		"reasonCodes":     reasonCodes,
+	}
+	// Only the failed status carries the incomplete-check message; a rejected
+	// image has an adverse finding and needs no "did not complete" note.
+	errMessage := ""
+	if record.Status == models.VerificationStatusFailed {
+		errMessage = "one or more image checks did not complete"
+	}
+	h.completeVerification(ctx, verificationID, subjectID.String(), record.Status, errMessage, 0, resultDetails)
 
 	h.auditor.Log(ctx, audit.AuditEvent{
 		Plane: audit.PlaneB, Action: audit.ActionVerificationCompleted, Actor: subjectID.String(),
@@ -619,6 +667,14 @@ func writeConsentError(w http.ResponseWriter, err error) {
 		status = http.StatusForbidden
 	}
 	writeJSONError(w, status, "consent_required", "An active consent is required for this verification")
+}
+
+// livenessIdentityMismatch reports whether a successful liveness check must be
+// rejected because the vendor explicitly said the live person does not match the
+// government-ID reference the caller supplied. An absent reference or an
+// unreported match result is not a mismatch.
+func livenessIdentityMismatch(governmentIDReference string, matchedIdentity *bool) bool {
+	return governmentIDReference != "" && matchedIdentity != nil && !*matchedIdentity
 }
 
 func providerOrEmpty(r *verification.ReverseImageResult) string {

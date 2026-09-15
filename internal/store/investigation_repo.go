@@ -331,19 +331,36 @@ func (r *InvestigationRepository) CreateBreakGlassGrant(ctx context.Context, act
 	return &grant, nil
 }
 
-// ActiveBreakGlassGrant returns an unexpired, unrevoked grant for an actor.
-func (r *InvestigationRepository) ActiveBreakGlassGrant(ctx context.Context, actor string) (*models.BreakGlassGrant, error) {
+// ActiveBreakGlassGrant returns an unexpired, unrevoked grant for an actor that
+// covers the requested target. A grant is scoped when it records a subject_id
+// or case_id; it only authorises actions on those targets. A grant with neither
+// is global for its window. Passing a nil target permits only a global grant, so
+// an unknown target cannot borrow a subject- or case-scoped elevation.
+func (r *InvestigationRepository) ActiveBreakGlassGrant(ctx context.Context, actor string, subjectID, caseID *uuid.UUID) (*models.BreakGlassGrant, error) {
 	query := `
-		SELECT grant_id, actor_role, justification, granted_at, expires_at
+		SELECT grant_id, actor_role, justification, subject_id, case_id, granted_at, expires_at
 		FROM investigation_break_glass
-		WHERE actor = $1 AND revoked_at IS NULL AND expires_at > now()
+		WHERE actor = $1
+		  AND revoked_at IS NULL
+		  AND expires_at > now()
+		  AND (subject_id IS NULL OR ($2::uuid IS NOT NULL AND subject_id = $2::uuid))
+		  AND (case_id IS NULL OR ($3::uuid IS NOT NULL AND case_id = $3::uuid))
 		ORDER BY granted_at DESC
 		LIMIT 1
 	`
 
+	var subjectArg, caseArg interface{}
+	if subjectID != nil {
+		subjectArg = *subjectID
+	}
+	if caseID != nil {
+		caseArg = *caseID
+	}
+
 	var grant models.BreakGlassGrant
-	err := r.db.QueryRowContext(ctx, query, actor).Scan(
-		&grant.GrantID, &grant.ActorRole, &grant.Justification, &grant.GrantedAt, &grant.ExpiresAt)
+	var subjectOut, caseOut *uuid.UUID
+	err := r.db.QueryRowContext(ctx, query, actor, subjectArg, caseArg).Scan(
+		&grant.GrantID, &grant.ActorRole, &grant.Justification, &subjectOut, &caseOut, &grant.GrantedAt, &grant.ExpiresAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -351,6 +368,14 @@ func (r *InvestigationRepository) ActiveBreakGlassGrant(ctx context.Context, act
 		return nil, fmt.Errorf("get break glass: %w", err)
 	}
 	grant.Actor = actor
+	if subjectOut != nil {
+		s := subjectOut.String()
+		grant.SubjectID = &s
+	}
+	if caseOut != nil {
+		s := caseOut.String()
+		grant.CaseID = &s
+	}
 	return &grant, nil
 }
 

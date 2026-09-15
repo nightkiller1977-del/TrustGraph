@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/nightkiller1977-del/trustgraph/internal/config"
@@ -130,26 +131,29 @@ func requireRole(ctx context.Context, w http.ResponseWriter, minimum string) boo
 // active emergency grant. It is an interface so the middleware can be tested
 // without a database.
 type breakGlassStore interface {
-	ActiveBreakGlassGrant(ctx context.Context, actor string) (*models.BreakGlassGrant, error)
+	ActiveBreakGlassGrant(ctx context.Context, actor string, subjectID, caseID *uuid.UUID) (*models.BreakGlassGrant, error)
 }
 
 // requireRoleOrBreakGlass enforces a minimum role, but also permits the action
-// when the caller holds an unexpired, unrevoked break-glass grant. Without this
-// the grant would be recorded and audited yet have no effect, leaving the
-// emergency path non-functional.
+// when the caller holds an unexpired, unrevoked break-glass grant covering the
+// target. Without this the grant would be recorded and audited yet have no
+// effect, leaving the emergency path non-functional.
 //
 // A grant confers supervisor-level access for its window: its whole purpose is
 // elevation beyond the caller's standing role, so the role recorded at request
 // time must not cap it. Every elevation is logged, because using a break-glass
 // grant is exactly the event the audit trail exists to capture.
-func requireRoleOrBreakGlass(ctx context.Context, w http.ResponseWriter, minimum string, cases breakGlassStore, logger *zap.Logger) bool {
+//
+// The returned grant is non-nil only when the action was authorised by
+// break-glass, so the caller can mark the access-log entry accordingly.
+func requireRoleOrBreakGlass(ctx context.Context, w http.ResponseWriter, minimum string, subjectID, caseID *uuid.UUID, cases breakGlassStore, logger *zap.Logger) *models.BreakGlassGrant {
 	if roleRank(investigatorRole(ctx)) >= roleRank(minimum) {
-		return true
+		return nil
 	}
 
 	if cases != nil {
 		actor := investigatorActor(ctx)
-		grant, err := cases.ActiveBreakGlassGrant(ctx, actor)
+		grant, err := cases.ActiveBreakGlassGrant(ctx, actor, subjectID, caseID)
 		if err != nil {
 			logger.Error("break-glass lookup failed", zap.Error(err))
 		} else if grant != nil {
@@ -158,12 +162,12 @@ func requireRoleOrBreakGlass(ctx context.Context, w http.ResponseWriter, minimum
 				zap.String("required_role", minimum),
 				zap.String("grant_id", grant.GrantID),
 			)
-			return true
+			return grant
 		}
 	}
 
 	writeJSONError(w, http.StatusForbidden, "forbidden", "Your investigator role does not permit this action")
-	return false
+	return nil
 }
 
 func roleRank(role string) int {

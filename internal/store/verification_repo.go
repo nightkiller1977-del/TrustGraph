@@ -193,6 +193,7 @@ func (r *VerificationRepository) RecordLiveness(ctx context.Context, subjectID u
 type ImageVerificationRecord struct {
 	SubjectID         uuid.UUID
 	ImageHash         string
+	Status            string
 	ReverseProvider   string
 	ReverseMatchCount int
 	ReverseMatches    interface{}
@@ -202,13 +203,19 @@ type ImageVerificationRecord struct {
 }
 
 // RecordImageVerification stores a combined reverse-search + synthetic result.
+// Status is supplied by the caller because a provider failure is not the same
+// as a clean image: the row must not be persisted as "verified" when a
+// configured check did not actually complete.
 func (r *VerificationRepository) RecordImageVerification(ctx context.Context, rec *ImageVerificationRecord) error {
 	matchesJSON, err := json.Marshal(rec.ReverseMatches)
 	if err != nil {
 		return fmt.Errorf("marshal reverse matches: %w", err)
 	}
 
-	status := models.VerificationStatusVerified
+	status := rec.Status
+	if status == "" {
+		status = models.VerificationStatusVerified
+	}
 	query := `
 		INSERT INTO image_verification (
 			subject_id, image_hash, status, reverse_search_provider, match_count, matches,

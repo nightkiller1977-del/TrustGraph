@@ -184,6 +184,9 @@ paths:
       operationId: listConsents
       summary: List a subject's consent records
       tags: [Verification (Plane B)]
+      security:
+        - SubjectBearer: []
+          ConnectionSphereUserHeader: []
       parameters:
         - $ref: "#/components/parameters/CsUserId"
       responses:
@@ -204,6 +207,9 @@ paths:
       operationId: grantConsent
       summary: Grant consent for a verification type
       tags: [Verification (Plane B)]
+      security:
+        - SubjectBearer: []
+          ConnectionSphereUserHeader: []
       parameters:
         - $ref: "#/components/parameters/CsUserId"
       requestBody:
@@ -227,6 +233,9 @@ paths:
       operationId: withdrawConsent
       summary: Withdraw consent and delete the associated Plane B data
       tags: [Verification (Plane B)]
+      security:
+        - SubjectBearer: []
+          ConnectionSphereUserHeader: []
       description: |
         Withdrawing consent erases the data collected under that purpose and
         marks the consent row withdrawn. The erase is scoped to the purpose:
@@ -260,6 +269,9 @@ paths:
       operationId: getVerificationStatus
       summary: Get a subject's verification status
       tags: [Verification (Plane B)]
+      security:
+        - SubjectBearer: []
+          ConnectionSphereUserHeader: []
       parameters:
         - $ref: "#/components/parameters/CsUserId"
       responses:
@@ -279,6 +291,9 @@ paths:
       operationId: getBadges
       summary: Get a subject's earned verification badges
       tags: [Verification (Plane B)]
+      security:
+        - SubjectBearer: []
+          ConnectionSphereUserHeader: []
       parameters:
         - $ref: "#/components/parameters/CsUserId"
       responses:
@@ -311,6 +326,9 @@ paths:
         for the subject. Use the purpose-scoped consent withdrawal when only one
         purpose should be erased.
       tags: [Verification (Plane B)]
+      security:
+        - SubjectBearer: []
+          ConnectionSphereUserHeader: []
       parameters:
         - $ref: "#/components/parameters/CsUserId"
       responses:
@@ -326,6 +344,9 @@ paths:
       operationId: linkedInAuthorize
       summary: Begin the LinkedIn OAuth flow
       tags: [Verification (Plane B)]
+      security:
+        - SubjectBearer: []
+          ConnectionSphereUserHeader: []
       description: |
         Requires an active `linkedin_oauth` consent. Returns a single-use `state`
         bound to the subject; the callback rejects unknown or reused states.
@@ -360,6 +381,7 @@ paths:
       operationId: linkedInCallback
       summary: Complete the LinkedIn OAuth flow
       tags: [Verification (Plane B)]
+      security: []  # browser redirect; protected by the single-use OAuth state
       parameters:
         - name: state
           in: query
@@ -402,6 +424,9 @@ paths:
       operationId: verifyGovernmentId
       summary: Submit a government ID document for verification
       tags: [Verification (Plane B)]
+      security:
+        - SubjectBearer: []
+          ConnectionSphereUserHeader: []
       description: |
         Requires an active `government_id` consent. Document images are sent to
         the vendor and are not persisted by TrustGraph; only the vendor
@@ -464,6 +489,9 @@ paths:
       operationId: verifyLiveness
       summary: Run a proof-of-person (liveness) check
       tags: [Verification (Plane B)]
+      security:
+        - SubjectBearer: []
+          ConnectionSphereUserHeader: []
       description: |
         Requires an active `liveness` consent. Video frames are sent to the
         vendor and are not persisted by TrustGraph.
@@ -513,6 +541,9 @@ paths:
       operationId: verifyImage
       summary: Run reverse-image search and synthetic-image detection
       tags: [Verification (Plane B)]
+      security:
+        - SubjectBearer: []
+          ConnectionSphereUserHeader: []
       description: |
         Requires an active `image_verification` consent. The image is sent to
         the configured vendors; TrustGraph stores only a SHA-256 hash and the
@@ -1064,6 +1095,19 @@ components:
       type: http
       scheme: bearer
       description: "Set via INVESTIGATOR_TOKEN. Optional X-Investigator-Actor header names the human."
+    SubjectBearer:
+      type: http
+      scheme: bearer
+      description: >-
+        Set via SUBJECT_TOKEN. Authenticates ConnectSphere (the caller acting on
+        behalf of a subject) to the Plane B verification routes.
+    ConnectionSphereUserHeader:
+      type: apiKey
+      in: header
+      name: X-ConnectionSphere-User-Id
+      description: >-
+        The authenticated ConnectSphere user id. Required on subject-scoped Plane
+        B routes and must equal the {csUserId} in the path.
 
   schemas:
     AssessmentRequest:

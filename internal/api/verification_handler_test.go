@@ -28,6 +28,32 @@ func TestDecodeUploadBody_RejectsOversizedPayload(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "payload_too_large")
 }
 
+// TestLivenessIdentityMismatch guards the fix that rejects a high-scoring
+// liveness result when the vendor explicitly reported that the live person did
+// not match the caller-supplied identity document.
+func TestLivenessIdentityMismatch(t *testing.T) {
+	yes, no := true, false
+
+	tests := []struct {
+		name         string
+		reference    string
+		matched      *bool
+		wantMismatch bool
+	}{
+		{name: "explicit mismatch is rejected", reference: "doc-1", matched: &no, wantMismatch: true},
+		{name: "explicit match is accepted", reference: "doc-1", matched: &yes, wantMismatch: false},
+		{name: "unreported match is not a mismatch", reference: "doc-1", matched: nil, wantMismatch: false},
+		{name: "no reference ignores the field", reference: "", matched: &no, wantMismatch: false},
+		{name: "no reference and no match", reference: "", matched: nil, wantMismatch: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantMismatch, livenessIdentityMismatch(tt.reference, tt.matched))
+		})
+	}
+}
+
 func TestDecodeUploadBody_AcceptsPayloadWithinLimit(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte(`{"frame":"abc"}`)))
 	rec := httptest.NewRecorder()

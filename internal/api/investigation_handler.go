@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -93,7 +94,7 @@ func (h *InvestigationHandler) CreateCase(w http.ResponseWriter, r *http.Request
 		Details: map[string]interface{}{"caseId": created.CaseID, "caseNumber": created.CaseNumber, "priority": created.Priority},
 		Result:  "ok", RequestID: r.Header.Get("X-Request-ID"),
 	})
-	h.recordAccess(ctx, created.CaseID, subjectID, actor, investigatorRole(ctx), "case.create", true, "")
+	h.recordAccess(ctx, created.CaseID, subjectID, actor, investigatorRole(ctx), "case.create", true, "", nil)
 
 	writeJSON(w, http.StatusCreated, created)
 }
@@ -148,7 +149,7 @@ func (h *InvestigationHandler) GetCase(w http.ResponseWriter, r *http.Request) {
 		Details: map[string]interface{}{"caseId": caseID.String()},
 		Result:  "ok", RequestID: r.Header.Get("X-Request-ID"),
 	})
-	h.recordAccess(ctx, caseID.String(), subjectID, actor, investigatorRole(ctx), "case.view", true, "")
+	h.recordAccess(ctx, caseID.String(), subjectID, actor, investigatorRole(ctx), "case.view", true, "", nil)
 
 	writeJSON(w, http.StatusOK, investigation)
 }
@@ -185,8 +186,30 @@ func (h *InvestigationHandler) UpdateCase(w http.ResponseWriter, r *http.Request
 	if closing {
 		required = RoleInvestigatorSupervisor
 	}
-	if !requireRoleOrBreakGlass(ctx, w, required, h.cases, h.logger) {
-		return
+
+	// A break-glass grant may be scoped to a subject or case, so an elevated
+	// request must be authorised against this case's identifiers; a grant issued
+	// for another case must not cover this one. The common path (sufficient
+	// standing role) skips the extra lookup entirely.
+	var grant *models.BreakGlassGrant
+	if roleRank(investigatorRole(ctx)) >= roleRank(required) {
+		grant = nil
+	} else {
+		existing, err := h.cases.GetCase(ctx, caseID)
+		if err != nil {
+			h.logger.Error("load case for authorization failed", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "Failed to load case")
+			return
+		}
+		if existing == nil {
+			writeJSONError(w, http.StatusNotFound, "not_found", "Case not found")
+			return
+		}
+		caseSubjectID := parseOptionalUUID(existing.SubjectID)
+		grant = requireRoleOrBreakGlass(ctx, w, required, caseSubjectID, &caseID, h.cases, h.logger)
+		if grant == nil {
+			return
+		}
 	}
 
 	updated, err := h.cases.UpdateCase(ctx, caseID, req)
@@ -213,7 +236,7 @@ func (h *InvestigationHandler) UpdateCase(w http.ResponseWriter, r *http.Request
 		Details: map[string]interface{}{"caseId": caseID.String(), "status": updated.Status},
 		Result:  "ok", RequestID: r.Header.Get("X-Request-ID"),
 	})
-	h.recordAccess(ctx, caseID.String(), subjectID, actor, investigatorRole(ctx), "case.update", true, "")
+	h.recordAccess(ctx, caseID.String(), subjectID, actor, investigatorRole(ctx), "case.update", true, "", grant)
 
 	writeJSON(w, http.StatusOK, updated)
 }
@@ -429,7 +452,7 @@ func (h *InvestigationHandler) RequestBreakGlass(w http.ResponseWriter, r *http.
 		},
 		Result: "ok", RequestID: r.Header.Get("X-Request-ID"),
 	})
-	h.recordAccess(ctx, req.CaseID, subjectID, actor, investigatorRole(ctx), "break_glass.request", true, req.Justification)
+	h.recordAccess(ctx, req.CaseID, subjectID, actor, investigatorRole(ctx), "break_glass.request", true, req.Justification, nil)
 	if caseID != nil {
 		h.recordBreakGlassAccess(ctx, caseID.String(), subjectID, actor, investigatorRole(ctx), req.Justification)
 	}
@@ -448,13 +471,29 @@ func (h *InvestigationHandler) GetAccessLog(w http.ResponseWriter, r *http.Reque
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	if !requireRoleOrBreakGlass(ctx, w, RoleInvestigatorSupervisor, h.cases, h.logger) {
-		return
-	}
-
 	caseID, ok := parseCaseID(w, r)
 	if !ok {
 		return
+	}
+
+	// A grant scoped to a subject or case only authorises reading that target's
+	// access log, so an elevated request is checked against the case's
+	// identifiers. The common path (supervisor) skips the extra lookup.
+	if roleRank(investigatorRole(ctx)) < roleRank(RoleInvestigatorSupervisor) {
+		existing, err := h.cases.GetCase(ctx, caseID)
+		if err != nil {
+			h.logger.Error("load case for authorization failed", zap.Error(err))
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "Failed to load case")
+			return
+		}
+		if existing == nil {
+			writeJSONError(w, http.StatusNotFound, "not_found", "Case not found")
+			return
+		}
+		caseSubjectID := parseOptionalUUID(existing.SubjectID)
+		if requireRoleOrBreakGlass(ctx, w, RoleInvestigatorSupervisor, caseSubjectID, &caseID, h.cases, h.logger) == nil {
+			return
+		}
 	}
 
 	entries, err := h.cases.ListAccessLog(ctx, caseID, 0)
@@ -467,7 +506,7 @@ func (h *InvestigationHandler) GetAccessLog(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]interface{}{"caseId": caseID.String(), "entries": entries})
 }
 
-func (h *InvestigationHandler) recordAccess(ctx context.Context, caseID string, subjectID *uuid.UUID, actor, role, action string, granted bool, reason string) {
+func (h *InvestigationHandler) recordAccess(ctx context.Context, caseID string, subjectID *uuid.UUID, actor, role, action string, granted bool, reason string, grant *models.BreakGlassGrant) {
 	var caseUUID *uuid.UUID
 	if caseID != "" {
 		if id, err := uuid.Parse(caseID); err == nil {
@@ -477,6 +516,13 @@ func (h *InvestigationHandler) recordAccess(ctx context.Context, caseID string, 
 	entry := &store.AccessLogEntry{
 		CaseID: caseUUID, SubjectID: subjectID, Actor: actor, ActorRole: role,
 		Action: action, Granted: granted, Reason: reason,
+	}
+	// Mark actions that were authorised by break-glass rather than by standing
+	// role, and record why, so the durable trail does not let an elevated action
+	// read as an ordinary one.
+	if grant != nil {
+		entry.BreakGlass = true
+		entry.Reason = strings.TrimSpace(reason + " break_glass grant_id=" + grant.GrantID + " justification=" + grant.Justification)
 	}
 	if err := h.cases.RecordAccess(ctx, entry); err != nil {
 		h.logger.Error("record investigation access failed", zap.Error(err))

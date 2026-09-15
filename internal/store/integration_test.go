@@ -286,15 +286,56 @@ func TestIntegration_BreakGlassGrantExpires(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, grant.GrantID)
 
-	active, err := cases.ActiveBreakGlassGrant(ctx, "investigator@example.com")
+	active, err := cases.ActiveBreakGlassGrant(ctx, "investigator@example.com", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, active)
 
 	time.Sleep(1100 * time.Millisecond)
 
-	active, err = cases.ActiveBreakGlassGrant(ctx, "investigator@example.com")
+	active, err = cases.ActiveBreakGlassGrant(ctx, "investigator@example.com", nil, nil)
 	require.NoError(t, err)
 	assert.Nil(t, active, "an expired grant must not be returned as active")
+}
+
+// TestIntegration_BreakGlassGrantIsScoped pins the fix for the over-broad grant
+// lookup: a grant recorded against one case must not authorise action on
+// another, and a case-scoped grant must not satisfy a target-less lookup.
+func TestIntegration_BreakGlassGrantIsScoped(t *testing.T) {
+	db := testDB(t)
+	cases := NewInvestigationRepository(db)
+	ctx := context.Background()
+
+	subjectID, err := NewSubjectRepository(db).FindOrCreateSubject(ctx, "cs_break_glass_scope")
+	require.NoError(t, err)
+
+	scopedCase, err := cases.CreateCase(ctx, models.CaseCreateRequest{Title: "scoped case"}, "supervisor@example.com")
+	require.NoError(t, err)
+	scopedCaseID, err := uuid.Parse(scopedCase.CaseID)
+	require.NoError(t, err)
+
+	otherCase, err := cases.CreateCase(ctx, models.CaseCreateRequest{Title: "other case"}, "supervisor@example.com")
+	require.NoError(t, err)
+	otherCaseID, err := uuid.Parse(otherCase.CaseID)
+	require.NoError(t, err)
+
+	_, err = cases.CreateBreakGlassGrant(ctx, "investigator@example.com", "investigator",
+		"case-scoped grant", &subjectID, &scopedCaseID, time.Hour)
+	require.NoError(t, err)
+
+	// The scoped target authorises.
+	active, err := cases.ActiveBreakGlassGrant(ctx, "investigator@example.com", &subjectID, &scopedCaseID)
+	require.NoError(t, err)
+	require.NotNil(t, active)
+
+	// A different case does not.
+	active, err = cases.ActiveBreakGlassGrant(ctx, "investigator@example.com", &subjectID, &otherCaseID)
+	require.NoError(t, err)
+	assert.Nil(t, active, "a case-scoped grant must not cover another case")
+
+	// A target-less lookup does not either.
+	active, err = cases.ActiveBreakGlassGrant(ctx, "investigator@example.com", nil, nil)
+	require.NoError(t, err)
+	assert.Nil(t, active, "a case-scoped grant must not satisfy a target-less lookup")
 }
 
 func TestIntegration_EmploymentRoundTrip(t *testing.T) {

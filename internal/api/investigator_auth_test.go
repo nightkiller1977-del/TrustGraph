@@ -6,10 +6,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"github.com/nightkiller1977-del/trustgraph/internal/config"
+	"github.com/nightkiller1977-del/trustgraph/internal/models"
 )
 
 func TestInvestigatorAuth_NotConfiguredReturns503(t *testing.T) {
@@ -174,6 +177,66 @@ func TestRequireRole(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fakeBreakGlassStore records the scope it was asked about so the test can
+// assert the middleware passes the target through rather than querying by actor
+// alone.
+type fakeBreakGlassStore struct {
+	grant      *models.BreakGlassGrant
+	gotSubject *uuid.UUID
+	gotCase    *uuid.UUID
+	callCount  int
+}
+
+func (f *fakeBreakGlassStore) ActiveBreakGlassGrant(_ context.Context, _ string, subjectID, caseID *uuid.UUID) (*models.BreakGlassGrant, error) {
+	f.callCount++
+	f.gotSubject = subjectID
+	f.gotCase = caseID
+	return f.grant, nil
+}
+
+func TestRequireRoleOrBreakGlass_PassesTargetScopeAndMarksGrant(t *testing.T) {
+	caseID := uuid.New()
+	subjectID := uuid.New()
+
+	store := &fakeBreakGlassStore{grant: &models.BreakGlassGrant{GrantID: "grant-1"}}
+	ctx := context.WithValue(context.Background(), ctxKeyInvestigatorRole, RoleInvestigatorInvestigator)
+	rec := httptest.NewRecorder()
+
+	got := requireRoleOrBreakGlass(ctx, rec, RoleInvestigatorSupervisor, &subjectID, &caseID, store, zap.NewNop())
+
+	require.NotNil(t, got, "an active grant must authorise the action")
+	assert.Equal(t, "grant-1", got.GrantID)
+	require.NotNil(t, store.gotCase)
+	assert.Equal(t, caseID, *store.gotCase, "the case target must be passed to the lookup")
+	require.NotNil(t, store.gotSubject)
+	assert.Equal(t, subjectID, *store.gotSubject, "the subject target must be passed to the lookup")
+}
+
+func TestRequireRoleOrBreakGlass_NoGrantDenies(t *testing.T) {
+	caseID := uuid.New()
+	store := &fakeBreakGlassStore{}
+	ctx := context.WithValue(context.Background(), ctxKeyInvestigatorRole, RoleInvestigatorInvestigator)
+	rec := httptest.NewRecorder()
+
+	got := requireRoleOrBreakGlass(ctx, rec, RoleInvestigatorSupervisor, nil, &caseID, store, zap.NewNop())
+
+	assert.Nil(t, got)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestRequireRoleOrBreakGlass_StandingRoleSkipsLookup(t *testing.T) {
+	caseID := uuid.New()
+	store := &fakeBreakGlassStore{grant: &models.BreakGlassGrant{GrantID: "grant-1"}}
+	ctx := context.WithValue(context.Background(), ctxKeyInvestigatorRole, RoleInvestigatorSupervisor)
+	rec := httptest.NewRecorder()
+
+	got := requireRoleOrBreakGlass(ctx, rec, RoleInvestigatorSupervisor, nil, &caseID, store, zap.NewNop())
+
+	assert.Nil(t, got, "a standing role is not a break-glass elevation")
+	assert.Zero(t, store.callCount, "the grant store must not be consulted when the role suffices")
+	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
 func okHandler() http.Handler {
