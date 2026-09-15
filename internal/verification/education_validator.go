@@ -38,58 +38,58 @@ type EducationData struct {
 
 // EducationValidationResult contains the validation score and details
 type EducationValidationResult struct {
-	ConfidenceScore int       `json:"confidence_score"` // 0-100
-	IsVerified      bool      `json:"is_verified"`      // true if > 70
-	Signals         []string  `json:"signals"`          // Evidence signals
-	Badge           string    `json:"badge"`            // Display badge
-	Details         string    `json:"details"`          // Human-readable summary
-	Cost            float64   `json:"cost"`             // $0 for free validation
+	ConfidenceScore int      `json:"confidence_score"` // 0-100
+	IsVerified      bool     `json:"is_verified"`      // true if > 70
+	Signals         []string `json:"signals"`          // Evidence signals
+	Badge           string   `json:"badge"`            // Display badge
+	Details         string   `json:"details"`          // Human-readable summary
+	Cost            float64  `json:"cost"`             // $0 for free validation
 }
 
 // KnownUniversities is a curated list of real universities (top 500 by enrollment)
 // In production, this would be loaded from a database or external service
 var KnownUniversities = map[string]struct{}{
 	// Ivy League
-	"harvard university":       {},
-	"yale university":          {},
-	"princeton university":     {},
-	"columbia university":      {},
+	"harvard university":         {},
+	"yale university":            {},
+	"princeton university":       {},
+	"columbia university":        {},
 	"university of pennsylvania": {},
-	"dartmouth college":        {},
-	"brown university":         {},
-	"cornell university":       {},
+	"dartmouth college":          {},
+	"brown university":           {},
+	"cornell university":         {},
 
 	// Top State Schools
-	"stanford university":      {},
-	"mit":                      {},
+	"stanford university":                   {},
+	"mit":                                   {},
 	"massachusetts institute of technology": {},
-	"university of california, berkeley": {},
-	"uc berkeley":              {},
-	"university of michigan":   {},
-	"university of virginia":   {},
-	"university of texas at austin": {},
-	"university of washington": {},
+	"university of california, berkeley":    {},
+	"uc berkeley":                           {},
+	"university of michigan":                {},
+	"university of virginia":                {},
+	"university of texas at austin":         {},
+	"university of washington":              {},
 	"university of california, los angeles": {},
-	"ucla":                     {},
-	"northwestern university":  {},
-	"duke university":          {},
-	"carnegie mellon university": {},
-	"caltech":                  {},
+	"ucla":                                  {},
+	"northwestern university":               {},
+	"duke university":                       {},
+	"carnegie mellon university":            {},
+	"caltech":                               {},
 
 	// Other notable schools
-	"chicago university":       {},
-	"university of chicago":    {},
-	"johns hopkins university": {},
-	"rice university":          {},
-	"emory university":         {},
-	"vanderbilt university":    {},
+	"chicago university":                 {},
+	"university of chicago":              {},
+	"johns hopkins university":           {},
+	"rice university":                    {},
+	"emory university":                   {},
+	"vanderbilt university":              {},
 	"washington university in st. louis": {},
-	"georgia institute of technology": {},
-	"georgia tech":             {},
+	"georgia institute of technology":    {},
+	"georgia tech":                       {},
 
 	// Community colleges (partial list, real impl would have all)
-	"community college":        {},
-	"college":                  {},
+	"community college": {},
+	"college":           {},
 }
 
 // DegreeKeywords maps degrees to career fields

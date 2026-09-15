@@ -1,4 +1,4 @@
-.PHONY: help build run test clean up down logs dev deps fmt lint db-init
+.PHONY: help build run test clean up down logs dev deps fmt lint db-init test-integration
 
 help:
 	@echo "TrustGraph Makefile commands:"
@@ -7,6 +7,7 @@ help:
 	@echo "  make down         - Stop TrustGraph services"
 	@echo "  make logs         - View service logs"
 	@echo "  make test         - Run tests"
+	@echo "  make test-integration - Run store tests against a real Postgres"
 	@echo "  make clean        - Clean up TrustGraph containers"
 	@echo "  make dev          - Start local dev server (requires ConnectionSphere Postgres)"
 	@echo "  make db-init      - Create trustgraph database in ConnectionSphere Postgres"
@@ -49,6 +50,12 @@ dev:
 
 test:
 	go test -v ./...
+
+# Integration tests run against a real Postgres and skip if TEST_DATABASE_URL
+# is unset, so this target needs a reachable database to be meaningful.
+test-integration:
+	@test -n "$$TEST_DATABASE_URL" || (echo "TEST_DATABASE_URL is not set" && exit 1)
+	go test -tags=integration -count=1 -v ./internal/store/...
 
 deps:
 	go mod download

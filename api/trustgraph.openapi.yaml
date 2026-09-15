@@ -1,10 +1,28 @@
 openapi: 3.1.0
 info:
   title: TrustGraph API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     Trust, safety, and verification service for ConnectionSphere.
-    Phase 1: First-party signals (Plane A) only.
+
+    Planes:
+      - Plane A: first-party signals and trust assessment.
+      - Plane B: consented verification (LinkedIn, government ID, liveness,
+        image). Every Plane B read/write requires an active consent.
+      - Plane C: investigation tools, restricted to authenticated investigators.
+
+    Auth:
+      - Plane A assessment endpoints are called service-to-service.
+      - Plane B endpoints are subject-scoped and reached by the app on behalf
+        of the subject; consent is enforced server-side per operation.
+      - `/v1/admin/*` and `/v1/metrics/*` require `Authorization: Bearer
+        $ADMIN_TOKEN`.
+      - `/v1/investigations/*` require `Authorization: Bearer
+        $INVESTIGATOR_TOKEN` (or `$ADMIN_TOKEN` for supervisor-level access),
+        plus an optional `X-Investigator-Actor` header naming the human.
+
+    When a vendor integration is not configured, its endpoint returns
+    `503 not_configured`. It never returns a passing result it did not obtain.
 
 servers:
   - url: http://localhost:8081
@@ -12,11 +30,19 @@ servers:
   - url: https://trustgraph-api.onrender.com
     description: Render production
 
+tags:
+  - name: Assessment
+  - name: Appeals
+  - name: Verification (Plane B)
+  - name: Admin
+  - name: Investigations (Plane C)
+
 paths:
   /health:
     get:
       operationId: healthCheck
       summary: Health check
+      tags: [Assessment]
       responses:
         "200":
           description: Service is healthy
@@ -33,13 +59,17 @@ paths:
     post:
       operationId: createAssessment
       summary: Request a trust assessment for a ConnectionSphere user
+      tags: [Assessment]
       description: |
-        Evaluates first-party signals and returns a trust tier, risk score,
-        and decision. Idempotent — resending the same idempotencyKey within
-        24 hours returns the cached result.
+        Evaluates signals and returns a trust tier, risk score, and decision.
+        Idempotent — resending the same idempotencyKey within 24 hours returns
+        the cached result.
 
-        Timeout: 300ms recommended from ColdFusion caller. If TrustGraph
-        is unavailable, the caller should fail-open to provisional tier.
+        The age gate runs here: a subject whose date of birth puts them under
+        18 is blocked and the block is audited as `age_gate_blocked`.
+
+        Timeout: 300ms recommended from the caller. If TrustGraph is
+        unavailable, the caller should fail-open to provisional tier.
       requestBody:
         required: true
         content:
@@ -53,6 +83,7 @@ paths:
                 connectionSphereUserId: "usr_12345"
                 email: "user@example.com"
                 phone: "+15551234567"
+                dateOfBirth: "1996-04-02"
               signals:
                 emailVerified: true
                 phoneVerified: false
@@ -75,6 +106,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Age gate blocked the subject
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "500":
           description: Internal server error
           content:
@@ -86,13 +123,9 @@ paths:
     get:
       operationId: getAssessment
       summary: Retrieve a previous assessment by ID
+      tags: [Assessment]
       parameters:
-        - name: assessmentId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
+        - $ref: "#/components/parameters/AssessmentId"
       responses:
         "200":
           description: Assessment found
@@ -113,7 +146,925 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /v1/appeals/{assessmentId}:
+    post:
+      operationId: submitAppeal
+      summary: Submit a user appeal against an assessment outcome
+      tags: [Appeals]
+      parameters:
+        - $ref: "#/components/parameters/AssessmentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AppealRequest"
+      responses:
+        "201":
+          description: Appeal recorded for review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Appeal"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Assessment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /v1/verification/subjects/{csUserId}/consents:
+    get:
+      operationId: listConsents
+      summary: List a subject's consent records
+      tags: [Verification (Plane B)]
+      parameters:
+        - $ref: "#/components/parameters/CsUserId"
+      responses:
+        "200":
+          description: Consent records
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  consents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Consent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    post:
+      operationId: grantConsent
+      summary: Grant consent for a verification type
+      tags: [Verification (Plane B)]
+      parameters:
+        - $ref: "#/components/parameters/CsUserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsentGrantRequest"
+      responses:
+        "201":
+          description: Consent recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Consent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /v1/verification/subjects/{csUserId}/consents/{consentType}:
+    delete:
+      operationId: withdrawConsent
+      summary: Withdraw consent and delete the associated Plane B data
+      tags: [Verification (Plane B)]
+      description: |
+        Withdrawing consent erases the data collected under that purpose and
+        marks the consent row withdrawn. The erase is scoped to the purpose:
+        withdrawing `image_verification` does not remove a subject's LinkedIn
+        profile, and a subject's other consents stay granted. Use
+        `DELETE /v1/verification/subjects/{csUserId}` to erase everything.
+
+        The consent row itself is retained (status `withdrawn`) as an audit
+        trail of what was once granted; it is not returned as active consent.
+      parameters:
+        - $ref: "#/components/parameters/CsUserId"
+        - name: consentType
+          in: path
+          required: true
+          schema:
+            $ref: "#/components/schemas/ConsentType"
+      responses:
+        "200":
+          description: Consent withdrawn and the data held under it deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Consent"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/verification/subjects/{csUserId}/status:
+    get:
+      operationId: getVerificationStatus
+      summary: Get a subject's verification status
+      tags: [Verification (Plane B)]
+      parameters:
+        - $ref: "#/components/parameters/CsUserId"
+      responses:
+        "200":
+          description: Verification status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationStatus"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/verification/subjects/{csUserId}/badges:
+    get:
+      operationId: getBadges
+      summary: Get a subject's earned verification badges
+      tags: [Verification (Plane B)]
+      parameters:
+        - $ref: "#/components/parameters/CsUserId"
+      responses:
+        "200":
+          description: Badges
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subjectId:
+                    type: string
+                    format: uuid
+                  badges:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Badge"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/verification/subjects/{csUserId}:
+    delete:
+      operationId: deleteVerification
+      summary: Delete all Plane B verification data for a subject
+      description: |
+        The full-erasure path for Plane B: removes every verification record,
+        LinkedIn profile and token, employment history, and consent-linked data
+        for the subject. Use the purpose-scoped consent withdrawal when only one
+        purpose should be erased.
+      tags: [Verification (Plane B)]
+      parameters:
+        - $ref: "#/components/parameters/CsUserId"
+      responses:
+        "204":
+          description: Data deleted; no response body
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/verification/subjects/{csUserId}/linkedin/authorize:
+    post:
+      operationId: linkedInAuthorize
+      summary: Begin the LinkedIn OAuth flow
+      tags: [Verification (Plane B)]
+      description: |
+        Requires an active `linkedin_oauth` consent. Returns a single-use `state`
+        bound to the subject; the callback rejects unknown or reused states.
+      parameters:
+        - $ref: "#/components/parameters/CsUserId"
+        - name: redirectUri
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uri
+      responses:
+        "200":
+          description: Authorization URL and state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authorizationUrl:
+                    type: string
+                    format: uri
+                  state:
+                    type: string
+        "403":
+          $ref: "#/components/responses/ConsentRequired"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/verification/linkedin/callback:
+    get:
+      operationId: linkedInCallback
+      summary: Complete the LinkedIn OAuth flow
+      tags: [Verification (Plane B)]
+      parameters:
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: LinkedIn profile linked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subjectId:
+                    type: string
+                    format: uuid
+                  linkedinId:
+                    type: string
+                  headline:
+                    type: string
+        "400":
+          description: Missing or invalid/reused OAuth state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/VendorFailure"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/verification/subjects/{csUserId}/government-id:
+    post:
+      operationId: verifyGovernmentId
+      summary: Submit a government ID document for verification
+      tags: [Verification (Plane B)]
+      description: |
+        Requires an active `government_id` consent. Document images are sent to
+        the vendor and are not persisted by TrustGraph; only the vendor
+        reference, verified name, country, and date of birth are stored.
+
+        When the vendor returns a date of birth, it is re-evaluated against the
+        minimum-age gate. An underage result does not fail the verification —
+        the identity check did succeed — but it is audited as
+        `age_gate_blocked` so downstream enforcement can act on it.
+      parameters:
+        - $ref: "#/components/parameters/CsUserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [documentImage]
+              properties:
+                documentImage:
+                  type: string
+                  description: Base64 document image, optionally a data URI
+                selfieImage:
+                  type: string
+                  description: Base64 selfie image, optionally a data URI
+                documentType:
+                  type: string
+                  example: passport
+                countryCode:
+                  type: string
+                  example: US
+      responses:
+        "200":
+          description: Verification outcome (a failed check is still a 200 with status=failed)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [verified, failed]
+                  verifiedName:
+                    type: string
+                  hasDateOfBirth:
+                    type: boolean
+                  failureReason:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ConsentRequired"
+        "502":
+          $ref: "#/components/responses/VendorFailure"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/verification/subjects/{csUserId}/liveness:
+    post:
+      operationId: verifyLiveness
+      summary: Run a proof-of-person (liveness) check
+      tags: [Verification (Plane B)]
+      description: |
+        Requires an active `liveness` consent. Video frames are sent to the
+        vendor and are not persisted by TrustGraph.
+      parameters:
+        - $ref: "#/components/parameters/CsUserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [frame]
+              properties:
+                frame:
+                  type: string
+                  description: Base64 video frame, optionally a data URI
+                governmentIdReference:
+                  type: string
+                  description: Optional vendor reference from a prior ID check
+      responses:
+        "200":
+          description: Liveness outcome
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [verified, failed]
+                  livenessScore:
+                    type: number
+                    format: float
+                  failureReason:
+                    type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ConsentRequired"
+        "502":
+          $ref: "#/components/responses/VendorFailure"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/verification/subjects/{csUserId}/image:
+    post:
+      operationId: verifyImage
+      summary: Run reverse-image search and synthetic-image detection
+      tags: [Verification (Plane B)]
+      description: |
+        Requires an active `image_verification` consent. The image is sent to
+        the configured vendors; TrustGraph stores only a SHA-256 hash and the
+        result summary, not the image itself. Either vendor may be configured
+        independently.
+      parameters:
+        - $ref: "#/components/parameters/CsUserId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                image:
+                  type: string
+                  description: Base64 image, optionally a data URI
+      responses:
+        "200":
+          description: Image verification outcome
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imageHash:
+                    type: string
+                  isSynthetic:
+                    type: boolean
+                  reverseMatches:
+                    type: integer
+                  reasonCodes:
+                    type: array
+                    items:
+                      type: string
+                    example: [IMAGE_CLEAN]
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/ConsentRequired"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/admin/queue:
+    get:
+      operationId: getReviewQueue
+      summary: List assessments awaiting human review
+      tags: [Admin]
+      security:
+        - AdminBearer: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Review queue
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AssessmentResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/admin/reviews/{assessmentId}:
+    post:
+      operationId: submitReview
+      summary: Record a human review decision
+      tags: [Admin]
+      security:
+        - AdminBearer: []
+      parameters:
+        - $ref: "#/components/parameters/AssessmentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcome]
+              properties:
+                outcome:
+                  type: string
+                  enum: [uphold, overturn, escalate]
+                notes:
+                  type: string
+      responses:
+        "200":
+          description: Review recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssessmentResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/metrics/calibration:
+    get:
+      operationId: getCalibration
+      summary: Calibration metrics for the current policy
+      tags: [Admin]
+      security:
+        - AdminBearer: []
+      responses:
+        "200":
+          description: Calibration metrics
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/investigations/tools:
+    get:
+      operationId: listInvestigationTools
+      summary: List available OSINT tools
+      tags: [Investigations (Plane C)]
+      security:
+        - InvestigatorBearer: []
+      responses:
+        "200":
+          description: Tool inventory
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/OsintTool"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/investigations/tools/{tool}/run:
+    post:
+      operationId: runInvestigationTool
+      summary: Run an OSINT tool
+      tags: [Investigations (Plane C)]
+      description: |
+        Requires the `investigator` role. The invocation is recorded in
+        `investigation_tool_query` and audited. Query parameters are
+        tool-specific; see each tool's entry from `/v1/investigations/tools`.
+      security:
+        - InvestigatorBearer: []
+      parameters:
+        - name: tool
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [internet_archive, domain_intel, username_search, theharvester, spiderfoot]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: object
+                  additionalProperties: true
+                  example:
+                    domain: example.com
+                caseId:
+                  type: string
+                  format: uuid
+                subjectId:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Tool result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  queryId:
+                    type: string
+                    format: uuid
+                  tool:
+                    type: string
+                  result:
+                    type: object
+                    additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unknown tool
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "502":
+          $ref: "#/components/responses/VendorFailure"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/investigations/cases:
+    get:
+      operationId: listInvestigationCases
+      summary: List investigation cases
+      tags: [Investigations (Plane C)]
+      security:
+        - InvestigatorBearer: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/CaseStatus"
+      responses:
+        "200":
+          description: Cases
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cases:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InvestigationCase"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+    post:
+      operationId: createInvestigationCase
+      summary: Open an investigation case
+      tags: [Investigations (Plane C)]
+      description: Requires the `investigator` role.
+      security:
+        - InvestigatorBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CaseCreateRequest"
+      responses:
+        "201":
+          description: Case created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvestigationCase"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/investigations/cases/{caseId}:
+    get:
+      operationId: getInvestigationCase
+      summary: Get a case and its notes
+      tags: [Investigations (Plane C)]
+      description: Reading a case is logged in the Plane C access log.
+      security:
+        - InvestigatorBearer: []
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Case with notes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvestigationCase"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Case not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+    patch:
+      operationId: updateInvestigationCase
+      summary: Update a case
+      tags: [Investigations (Plane C)]
+      description: |
+        Requires the `investigator` role. Setting status to `closed` or
+        `resolved` requires the `supervisor` role.
+      security:
+        - InvestigatorBearer: []
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CaseUpdateRequest"
+      responses:
+        "200":
+          description: Updated case
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvestigationCase"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Case not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/investigations/cases/{caseId}/notes:
+    post:
+      operationId: addInvestigationNote
+      summary: Add a note to a case
+      tags: [Investigations (Plane C)]
+      description: Requires the `investigator` role.
+      security:
+        - InvestigatorBearer: []
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                noteType:
+                  type: string
+                  example: note
+      responses:
+        "201":
+          description: Note created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvestigationNote"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/investigations/cases/{caseId}/access-log:
+    get:
+      operationId: getInvestigationAccessLog
+      summary: Get the Plane C access trail for a case
+      tags: [Investigations (Plane C)]
+      description: Requires the `supervisor` role — the log names investigators and justifications.
+      security:
+        - InvestigatorBearer: []
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Access log
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  caseId:
+                    type: string
+                    format: uuid
+                  entries:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AccessLogEntry"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
+  /v1/investigations/break-glass:
+    post:
+      operationId: requestBreakGlass
+      summary: Request time-boxed emergency elevated access
+      tags: [Investigations (Plane C)]
+      description: |
+        A justification of at least 20 characters is required. The grant is
+        time-boxed (default 60 minutes, capped at 4 hours), recorded in
+        `investigation_break_glass`, and flagged for review in the access log.
+      security:
+        - InvestigatorBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [justification]
+              properties:
+                justification:
+                  type: string
+                  minLength: 20
+                subjectId:
+                  type: string
+                  format: uuid
+                caseId:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Grant created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BreakGlassGrant"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/NotConfigured"
+
 components:
+  parameters:
+    AssessmentId:
+      name: assessmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    CsUserId:
+      name: csUserId
+      in: path
+      required: true
+      description: ConnectionSphere user ID
+      schema:
+        type: string
+        example: usr_12345
+    CaseId:
+      name: caseId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or malformed bearer token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Token invalid, or role insufficient for this action
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ConsentRequired:
+      description: No active consent for this verification type
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotConfigured:
+      description: The backing vendor integration is not configured on this deployment
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    VendorFailure:
+      description: The upstream vendor call failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: The requested subject, case, or consent does not exist
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  securitySchemes:
+    ServiceAccountHeader:
+      type: apiKey
+      in: header
+      name: X-Service-Account
+      description: ConnectionSphere service account identifier
+    AdminBearer:
+      type: http
+      scheme: bearer
+      description: "Set via ADMIN_TOKEN. Grants supervisor-level Plane C access."
+    InvestigatorBearer:
+      type: http
+      scheme: bearer
+      description: "Set via INVESTIGATOR_TOKEN. Optional X-Investigator-Actor header names the human."
+
   schemas:
     AssessmentRequest:
       type: object
@@ -150,6 +1101,10 @@ components:
           format: email
         phone:
           type: string
+        dateOfBirth:
+          type: string
+          format: date
+          description: Used by the age gate. Under-18 subjects are blocked.
 
     SignalsData:
       type: object
@@ -240,6 +1195,344 @@ components:
               items:
                 type: string
 
+    AppealRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+        contactEmail:
+          type: string
+          format: email
+
+    Appeal:
+      type: object
+      properties:
+        appealId:
+          type: string
+          format: uuid
+        assessmentId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        status:
+          type: string
+          enum: [submitted, under_review, upheld, overturned]
+        submittedAt:
+          type: string
+          format: date-time
+
+    ConsentType:
+      type: string
+      enum: [linkedin_oauth, government_id, liveness, image_verification]
+
+    ConsentGrantRequest:
+      type: object
+      required: [consentType]
+      properties:
+        consentType:
+          $ref: "#/components/schemas/ConsentType"
+        policyVersion:
+          type: string
+          description: Version of the consent policy the subject accepted
+        termsAccepted:
+          type: object
+          additionalProperties: true
+          description: Opaque record of the specific terms the subject accepted
+
+    Consent:
+      type: object
+      description: |
+        A consent record. Withdrawal is a soft state change rather than a
+        delete, so withdrawn records remain queryable for audit.
+      properties:
+        consentId:
+          type: string
+          format: uuid
+        subjectId:
+          type: string
+          format: uuid
+        plane:
+          type: string
+          enum: [B]
+        consentType:
+          $ref: "#/components/schemas/ConsentType"
+        consentStatus:
+          type: string
+          enum: [granted, withdrawn, expired]
+        policyVersion:
+          type: string
+        termsAccepted:
+          type: object
+          additionalProperties: true
+        grantedAt:
+          type: string
+          format: date-time
+        withdrawnAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    VerificationStatus:
+      type: object
+      properties:
+        subjectId:
+          type: string
+          format: uuid
+        consents:
+          type: array
+          items:
+            $ref: "#/components/schemas/Consent"
+        verifications:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerificationRecord"
+
+    VerificationRecord:
+      type: object
+      properties:
+        verificationId:
+          type: string
+          format: uuid
+        subjectId:
+          type: string
+          format: uuid
+        consentId:
+          type: string
+          format: uuid
+        verificationType:
+          type: string
+          enum: [education, employment, government_id, liveness, image]
+        vendor:
+          type: string
+        status:
+          type: string
+        result:
+          type: object
+          additionalProperties: true
+        errorMessage:
+          type: string
+        costUsd:
+          type: number
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+
+    Badge:
+      type: object
+      description: A user-visible trust badge derived from verification state.
+      properties:
+        type:
+          type: string
+          example: government_id
+        state:
+          type: string
+          enum: [verified, self_reported, none]
+        label:
+          type: string
+          example: Government ID verified
+        detail:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+
+    OsintTool:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        configured:
+          type: boolean
+          description: False when the tool's credentials or binary are absent.
+
+    CaseStatus:
+      type: string
+      enum: [open, investigating, escalated, resolved, closed]
+
+    CasePriority:
+      type: string
+      enum: [low, normal, high, urgent]
+
+    CaseCreateRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        subjectId:
+          type: string
+          format: uuid
+        priority:
+          $ref: "#/components/schemas/CasePriority"
+        triggerType:
+          type: string
+          example: fraud_report
+        triggerRef:
+          type: string
+        assignedTo:
+          type: string
+
+    CaseUpdateRequest:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/CaseStatus"
+        priority:
+          $ref: "#/components/schemas/CasePriority"
+        assignedTo:
+          type: string
+        findings:
+          type: string
+        resolution:
+          type: string
+          enum: [confirmed_violation, no_violation, inconclusive]
+
+    InvestigationCase:
+      type: object
+      properties:
+        caseId:
+          type: string
+          format: uuid
+        caseNumber:
+          type: string
+          example: INV-1001
+        subjectId:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          $ref: "#/components/schemas/CaseStatus"
+        priority:
+          $ref: "#/components/schemas/CasePriority"
+        triggerType:
+          type: string
+        triggerRef:
+          type: string
+        assignedTo:
+          type: string
+        createdBy:
+          type: string
+        findings:
+          type: string
+        resolution:
+          type: string
+        openedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        notes:
+          type: array
+          items:
+            $ref: "#/components/schemas/InvestigationNote"
+
+    InvestigationNote:
+      type: object
+      properties:
+        noteId:
+          type: string
+          format: uuid
+        caseId:
+          type: string
+          format: uuid
+        author:
+          type: string
+        authorRole:
+          type: string
+        noteType:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    AccessLogEntry:
+      type: object
+      properties:
+        caseId:
+          type: string
+          format: uuid
+        subjectId:
+          type: string
+          format: uuid
+        actor:
+          type: string
+        actorRole:
+          type: string
+        action:
+          type: string
+          example: case.view
+        resource:
+          type: string
+        resourceRef:
+          type: string
+        granted:
+          type: boolean
+        reason:
+          type: string
+        breakGlass:
+          type: boolean
+
+    BreakGlassGrant:
+      type: object
+      properties:
+        grantId:
+          type: string
+          format: uuid
+        actor:
+          type: string
+        actorRole:
+          type: string
+        subjectId:
+          type: string
+          format: uuid
+        caseId:
+          type: string
+          format: uuid
+        justification:
+          type: string
+        grantedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+        reviewedBy:
+          type: string
+        reviewedAt:
+          type: string
+          format: date-time
+        reviewOutcome:
+          type: string
+
     ErrorResponse:
       type: object
       properties:
@@ -248,11 +1541,3 @@ components:
           example: bad_request
         message:
           type: string
-          example: Missing required fields
-
-  securitySchemes:
-    ServiceAccountHeader:
-      type: apiKey
-      in: header
-      name: X-Service-Account
-      description: ConnectionSphere service account identifier

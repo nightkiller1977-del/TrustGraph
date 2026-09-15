@@ -36,10 +36,11 @@ func newTestEvaluator(t *testing.T, providers ...Provider) *Evaluator {
 }
 
 // TestEvaluateAll_ReturnsResultForEveryProvider verifies the real,
-// production-registered provider set (NewEvaluator's fixed list of five
+// production-registered provider set (NewEvaluator's fixed list of six
 // providers) all produce a result. A nil db is safe here because none of the
 // fields set below trigger a DB lookup in device/velocity/image (see their
-// respective "empty input" early-return branches).
+// respective "empty input" early-return branches), and the age gate is
+// stateless.
 func TestEvaluateAll_ReturnsResultForEveryProvider(t *testing.T) {
 	evaluator := NewEvaluator(zaptest.NewLogger(t))
 	evalCtx := &EvalContext{
@@ -51,13 +52,13 @@ func TestEvaluateAll_ReturnsResultForEveryProvider(t *testing.T) {
 
 	results := evaluator.EvaluateAll(context.Background(), evalCtx, nil)
 
-	assert.Len(t, results, 5)
+	assert.Len(t, results, 6)
 	names := make([]string, len(results))
 	for i, r := range results {
 		names[i] = r.Provider
 		assert.Nil(t, r.Error, "provider %s should not error", r.Provider)
 	}
-	assert.Equal(t, []string{"email", "phone", "device", "velocity", "image"}, names)
+	assert.Equal(t, []string{"age_gate", "email", "phone", "device", "velocity", "image"}, names)
 }
 
 // TestEvaluateAll_OneProviderErrorDoesNotAbortOthers injects a fake provider

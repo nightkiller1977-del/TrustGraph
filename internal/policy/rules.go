@@ -17,6 +17,15 @@ type Rule struct {
 func defaultRules() []Rule {
 	return []Rule{
 		{
+			// Highest priority: an underage registration is a legal/compliance
+			// failure, not a risk judgement, so nothing else may soften it.
+			Name:          "underage-user",
+			RequiredCodes: []string{models.ReasonCodeUnderageUser},
+			Decision:      decisionDeny,
+			TrustTier:     models.TrustTierLimited,
+			Priority:      0,
+		},
+		{
 			Name:          "fraud-pattern-velocity-disposable",
 			RequiredCodes: []string{models.ReasonCodeDisposableEmail, models.ReasonCodeHighRegistrationVelocity},
 			Decision:      decisionDeny,

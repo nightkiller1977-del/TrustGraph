@@ -69,6 +69,15 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Parse the date of birth up front. A malformed date is a client error
+	// rather than something to be swallowed: silently ignoring it would let a
+	// bad payload skip the minimum-age gate entirely.
+	dob, err := policy.ParseDateOfBirth(req.Signals.DateOfBirth)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "bad_request", "signals.dateOfBirth must be an ISO-8601 date (YYYY-MM-DD)")
+		return
+	}
+
 	// Idempotency check (respects configured TTL)
 	existing, err := h.repo.GetAssessmentByIdempotencyKey(ctx, req.IdempotencyKey, h.cfg.IdempotencyTTLHours)
 	if err != nil {
@@ -112,6 +121,7 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 		DeviceToken:            req.Signals.DeviceToken,
 		IPAddress:              req.Signals.IPAddress,
 		ImageHash:              req.Signals.ImageHash,
+		DateOfBirth:            dob,
 	}
 	if req.RequestContext != nil {
 		evalCtx.UserAgent = req.RequestContext.UserAgent
@@ -147,6 +157,31 @@ func (h *AssessmentHandler) CreateAssessment(w http.ResponseWriter, r *http.Requ
 
 	// Run policy engine
 	policyResult := h.policyEngine.Evaluate(policySignals)
+
+	// An underage registration is a compliance event, not merely a risk score,
+	// so it gets its own audit action to alert and report on.
+	if containsCode(policyResult.ReasonCodes, models.ReasonCodeUnderageUser) {
+		age := policy.EvaluateAgeGate(dob, time.Now()).Age
+		h.auditor.Log(ctx, audit.AuditEvent{
+			Plane:        audit.PlaneA,
+			Action:       audit.ActionAgeGateBlocked,
+			Actor:        "trustgraph-api",
+			ActorType:    audit.ActorTypeService,
+			ResourceType: "subject",
+			SubjectID:    &subjectID,
+			Details: map[string]interface{}{
+				"age":                    age,
+				"minimumAge":             policy.MinimumAge,
+				"connectionSphereUserId": req.Subject.ConnectionSphereUserID,
+			},
+			Result:    "blocked",
+			RequestID: requestID,
+		})
+		h.logger.Warn("underage registration blocked",
+			zap.String("connection_sphere_user_id", req.Subject.ConnectionSphereUserID),
+			zap.Int("age", age),
+		)
+	}
 
 	now := time.Now()
 	assessment := &models.Assessment{
@@ -279,4 +314,13 @@ func statusFromError(err error) string {
 		return "error"
 	}
 	return "ok"
+}
+
+func containsCode(codes []string, want string) bool {
+	for _, c := range codes {
+		if c == want {
+			return true
+		}
+	}
+	return false
 }

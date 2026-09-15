@@ -206,6 +206,9 @@ func determineActions(tier string, codeSet map[string]struct{}) []string {
 	if tier == models.TrustTierLimited {
 		actions = append(actions, models.RequiredActionReviewByHuman)
 	}
+	if _, ok := codeSet[models.ReasonCodeUnderageUser]; ok {
+		actions = append(actions, models.RequiredActionBlockAccount)
+	}
 
 	return actions
 }

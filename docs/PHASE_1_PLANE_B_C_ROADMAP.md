@@ -517,33 +517,112 @@ func (bg *BreakGlass) CheckAlert(event *InvestigationAuditEvent) error {
 
 ### Plane B Tables (New)
 
+Implemented names, as created by `migrations/005_plane_b_verification.sql` and
+`006_plane_b_employment.sql`. Note the consent table is `subject_consent`, not
+the originally planned `verification_consent`.
+
 ```sql
--- Already done ✅
+-- Pre-existing
 subject_education
 
--- Need to add
-subject_employment
-subject_linkedin_profile
-government_id_verification
-liveness_verification
-image_verification
-verification_consent
+-- Added (Plane B)
+subject_employment                 -- employment history, replaced atomically per re-sync
+subject_linkedin_profile           -- OAuth identity; tokens never selected by API reads
+oauth_state                        -- single-use OAuth state, consumed on callback
+employment_verification_request    -- employment validation requests
+government_id_verification          -- one row per ID attempt
+liveness_verification              -- one row per liveness attempt
+image_verification                 -- reverse-image + synthetic detection result
+verification_token                 -- generic attempt/state row across all Plane B types
+subject_consent                    -- consent grants/withdrawals, soft-state for audit
 
--- Update existing
-subject (add verified_at, has_government_id, has_liveness)
+-- Updated
+subject (adds verified_at, has_government_id, has_liveness)
 ```
 
 ### Plane C Tables (New)
 
+The tables below are what the implementation actually creates
+(`migrations/007_plane_c_investigation.sql`). The original plan named some
+tables that were not needed once the design settled; the mapping is noted so
+the two documents do not drift.
+
 ```sql
-investigation_case
-investigation_tool_query
-investigation_audit_event
-investigation_evidence
-investigator_role
-investigator_permission
-break_glass_alert
+-- As implemented
+investigation_case          -- cases (case_number allocated under an advisory lock)
+investigation_note          -- running notes per case
+investigation_tool_query    -- one row per OSINT invocation
+investigation_break_glass   -- time-boxed emergency grants
+investigation_access_log    -- every Plane C read/write, separate from audit
+
+-- Planned names that were replaced
+-- investigation_audit_event  -> general audit_log with plane='C' + investigation_access_log
+-- investigation_evidence     -> case notes + tool-query result summaries
+-- investigator_role/permission -> role is carried on the bearer token, not stored
+-- break_glass_alert          -> break-glass rows are flagged for review in-place
 ```
+
+Note: no `investigator` table is created. Investigator identity comes from the
+`INVESTIGATOR_TOKEN`/`ADMIN_TOKEN` bearer token plus the `X-Investigator-Actor`
+header; the deployment is expected to sit behind an identity-aware proxy. If
+per-investigator accounts are required later, that is a schema change, not a
+configuration change.
+
+---
+
+## Implementation Status (September 2026)
+
+The roadmap below is the plan of record; this table records what is actually in
+`main`. "Code" means the feature exists, builds, and has unit tests. "Live"
+means it has been exercised against the real external service — nothing in
+Plane B/C is marked live, because the vendor integrations have only been tested
+against fake responses.
+
+| Item | Code | Live | Notes |
+|------|------|------|-------|
+| Age gate | ✅ | ✅ | Enforced in `assessment_handler.go`; audited as `age_gate_blocked` |
+| Education validator | ✅ | ✅ | Pre-existing |
+| Employment validator | ✅ | ✅ | Timeline/overlap/known-employer checks |
+| LinkedIn OAuth | ✅ | ❌ | Needs `LINKEDIN_CLIENT_ID/SECRET/REDIRECT_URI` |
+| LinkedIn signal provider | ✅ | ❌ | Same credentials |
+| Government ID | ✅ | ❌ | Needs `ID_VENDOR_BASE_URL`/`ID_VENDOR_API_KEY` |
+| Liveness | ✅ | ❌ | Needs `LIVENESS_VENDOR_*` (falls back to ID vendor) |
+| Reverse image search | ✅ | ❌ | Needs `REVERSE_IMAGE_BASE_URL`/`REVERSE_IMAGE_API_KEY` |
+| Synthetic image detection | ✅ | ❌ | Needs `SYNTHETIC_IMAGE_BASE_URL`/`SYNTHETIC_IMAGE_API_KEY` |
+| Consent management | ✅ | ✅ | DB-backed; withdrawal erases the data held under that purpose only |
+| Plane B REST endpoints | ✅ | ✅ | See OpenAPI spec. Consent types: `linkedin_oauth`, `government_id`, `liveness`, `image_verification` |
+| Investigator auth/RBAC | ✅ | ✅ | Bearer token, roles viewer/investigator/supervisor |
+| Case management | ✅ | ✅ | Cases, notes, statuses, priorities |
+| Internet Archive | ✅ | ❌ | Free; no credentials. Live calls not verified in CI |
+| Domain intelligence | ✅ | ❌ | RDAP + DNS-over-HTTPS; free, no credentials |
+| Username enumeration | ✅ | ❌ | Implements the Sherlock role; probes public profile URLs |
+| theHarvester | ✅ | ❌ | Needs the `theHarvester` binary on PATH |
+| SpiderFoot | ✅ | ❌ | Needs `SPIDERFOOT_BASE_URL`+key, or the CLI binary |
+| Investigation APIs | ✅ | ✅ | See OpenAPI spec |
+| Enhanced audit logging | ✅ | ✅ | `investigation_access_log` + `audit_log` plane C |
+| Break-glass | ✅ | ✅ | Time-boxed grants with mandatory justification |
+| Break-glass *alerting* | ❌ | ❌ | Grants are recorded and flagged; no pager/notification integration |
+| 2FA for investigators | ❌ | ❌ | Delegated to the identity proxy in front of the service |
+| Right-to-deletion (Plane B/C) | ✅ | ✅ | `DELETE /v1/verification/subjects/{csUserId}` erases all Plane B data; withdrawal erases one purpose. Case retention is still not policy-driven |
+
+### Known gaps carried forward
+
+1. ~~**Age gate is not re-checked after ID verification.**~~ Closed: a verified
+   date of birth is now re-evaluated against the age gate in
+   `GovernmentIDVerify`; an underage result is audited as `age_gate_blocked`.
+   The verification itself still reports as successful, because the identity
+   check did succeed — the gate outcome is a separate signal.
+2. **Plane C case retention is unbounded.** No TTL or policy-driven purge for
+   cases, notes, or tool queries.
+3. **No live vendor testing.** Every vendor client is tested against fake HTTP
+   servers only.
+4. **Break-glass raises no alert.** It is auditable after the fact but does not
+   notify anyone in real time.
+5. **Store tests now exist.** Every repository method has an integration test
+   (`internal/store/integration_test.go`) that runs the real migrations against
+   a real PostgreSQL. They are gated by the `integration` build tag and
+   `TEST_DATABASE_URL`; `go test ./...` on a machine without a database still
+   passes. Run them with `make test-integration`.
 
 ---
 

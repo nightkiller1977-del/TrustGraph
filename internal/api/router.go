@@ -27,6 +27,23 @@ func NewRouter(db *store.PostgresDB, logger *zap.Logger, cfg *config.Config) *mu
 	appealHandler := NewAppealHandler(db, logger)
 	v1.HandleFunc("/appeals/{assessmentId}", appealHandler.SubmitAppeal).Methods("POST")
 
+	// Plane B: consent and verification (user-facing, subject-scoped)
+	verificationHandler := NewVerificationHandler(db, logger, cfg)
+	verify := v1.PathPrefix("/verification").Subrouter()
+	verify.HandleFunc("/subjects/{csUserId}/consents", verificationHandler.ListConsents).Methods("GET")
+	verify.HandleFunc("/subjects/{csUserId}/consents", verificationHandler.GrantConsent).Methods("POST")
+	verify.HandleFunc("/subjects/{csUserId}/consents/{consentType}", verificationHandler.WithdrawConsent).Methods("DELETE")
+	verify.HandleFunc("/subjects/{csUserId}/status", verificationHandler.VerifiedStatus).Methods("GET")
+	verify.HandleFunc("/subjects/{csUserId}/badges", verificationHandler.GetBadges).Methods("GET")
+	verify.HandleFunc("/subjects/{csUserId}", verificationHandler.DeleteVerification).Methods("DELETE")
+
+	// Plane B verification flows
+	verify.HandleFunc("/subjects/{csUserId}/linkedin/authorize", verificationHandler.LinkedInAuthorize).Methods("POST")
+	verify.HandleFunc("/linkedin/callback", verificationHandler.LinkedInCallback).Methods("GET")
+	verify.HandleFunc("/subjects/{csUserId}/government-id", verificationHandler.GovernmentIDVerify).Methods("POST")
+	verify.HandleFunc("/subjects/{csUserId}/liveness", verificationHandler.LivenessVerify).Methods("POST")
+	verify.HandleFunc("/subjects/{csUserId}/image", verificationHandler.ImageVerify).Methods("POST")
+
 	// Admin endpoints — require Bearer token
 	adminAuth := requireAdminAuth(cfg, logger)
 	admin := v1.PathPrefix("/admin").Subrouter()
@@ -40,6 +57,20 @@ func NewRouter(db *store.PostgresDB, logger *zap.Logger, cfg *config.Config) *mu
 	metrics.Use(adminAuth)
 	metricsHandler := NewMetricsHandler(db, logger, cfg)
 	metrics.HandleFunc("/calibration", metricsHandler.GetCalibration).Methods("GET")
+
+	// Plane C: investigations — require investigator Bearer token
+	investigationHandler := NewInvestigationHandler(db, logger, cfg)
+	investigations := v1.PathPrefix("/investigations").Subrouter()
+	investigations.Use(investigatorAuth(cfg, logger))
+	investigations.HandleFunc("/tools", investigationHandler.ListTools).Methods("GET")
+	investigations.HandleFunc("/cases", investigationHandler.ListCases).Methods("GET")
+	investigations.HandleFunc("/cases", investigationHandler.CreateCase).Methods("POST")
+	investigations.HandleFunc("/cases/{caseId}", investigationHandler.GetCase).Methods("GET")
+	investigations.HandleFunc("/cases/{caseId}", investigationHandler.UpdateCase).Methods("PATCH")
+	investigations.HandleFunc("/cases/{caseId}/notes", investigationHandler.AddNote).Methods("POST")
+	investigations.HandleFunc("/cases/{caseId}/access-log", investigationHandler.GetAccessLog).Methods("GET")
+	investigations.HandleFunc("/tools/{tool}/run", investigationHandler.RunTool).Methods("POST")
+	investigations.HandleFunc("/break-glass", investigationHandler.RequestBreakGlass).Methods("POST")
 
 	router.Use(loggingMiddleware(logger))
 	router.Use(jsonContentTypeMiddleware)
