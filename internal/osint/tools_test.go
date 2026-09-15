@@ -202,11 +202,12 @@ func TestUsernameSearchTool_FindsMatchingSite(t *testing.T) {
 	defer site.Close()
 
 	tool := NewUsernameSearchTool()
-	tool.Sites = map[string]string{"TestSite": site.URL + "/%s"}
+	tool.Sites = map[string]string{"TestSite": site.URL}
 	tool.Timeout = 5 * time.Second
 
 	result, err := tool.Run(context.Background(), map[string]interface{}{"username": "alice"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Count)
 	assert.Equal(t, "TestSite", result.Findings[0].Source)
+	assert.Equal(t, site.URL+"/alice", result.Findings[0].Value)
 }

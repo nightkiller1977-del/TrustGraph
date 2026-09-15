@@ -50,40 +50,6 @@ func validateUsername(raw string) (string, error) {
 	return user, nil
 }
 
-const hostProbe = "trustgraphprobe"
-
-// assertHostPinned checks that built points at the host its template intends.
-// Templates are either path-style (https://github.com/%s) or subdomain-style
-// (https://%s.tumblr.com); in both cases the substituted value must not move
-// the request off the template's host.
-func assertHostPinned(template, built string) error {
-	probeURL, err := url.Parse(strings.Replace(template, "%s", hostProbe, 1))
-	if err != nil {
-		return fmt.Errorf("invalid url template: %w", err)
-	}
-	got, err := url.Parse(built)
-	if err != nil {
-		return fmt.Errorf("invalid profile url: %w", err)
-	}
-	if got.Scheme != "http" && got.Scheme != "https" {
-		return fmt.Errorf("profile url must be http(s)")
-	}
-	if got.User != nil {
-		return fmt.Errorf("profile url must not carry userinfo")
-	}
-	if strings.Contains(probeURL.Host, hostProbe) {
-		suffix := strings.TrimPrefix(probeURL.Host, hostProbe)
-		if suffix == "" || !strings.HasSuffix(got.Host, suffix) || got.Host == strings.TrimPrefix(suffix, ".") {
-			return fmt.Errorf("profile url host %q is outside template host", got.Host)
-		}
-		return nil
-	}
-	if got.Host != probeURL.Host {
-		return fmt.Errorf("profile url host %q does not match template host %q", got.Host, probeURL.Host)
-	}
-	return nil
-}
-
 // assertSameHost verifies that built stayed on the same host and scheme as
 // base. It guards endpoints whose path is built by joining a caller-supplied
 // segment onto a pinned base.

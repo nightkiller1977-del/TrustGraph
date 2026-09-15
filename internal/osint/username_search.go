@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -13,11 +14,15 @@ import (
 // public sites by probing the profile URL. It is free and needs no credentials.
 //
 // Only sites with a stable, unauthenticated public profile URL are included.
-// Probes are GET requests; some sites return 200 for a missing profile, so the
+// Probes are HEAD requests; some sites return 200 for a missing profile, so the
 // tool treats "present" as a soft signal rather than proof of identity.
+//
+// Sites maps a display name to the base profile URL for that site. The
+// username is appended as a path segment by buildProfileURL, which keeps the
+// request pinned to the site's host.
 type UsernameSearchTool struct {
 	HTTPClient *http.Client
-	Sites      map[string]string // name -> URL template with %s for the username
+	Sites      map[string]string
 	Timeout    time.Duration
 }
 
@@ -26,20 +31,33 @@ func NewUsernameSearchTool() *UsernameSearchTool {
 		HTTPClient: &http.Client{Timeout: 10 * time.Second},
 		Timeout:    20 * time.Second,
 		Sites: map[string]string{
-			"GitHub":     "https://github.com/%s",
-			"GitLab":     "https://gitlab.com/%s",
-			"Reddit":     "https://www.reddit.com/user/%s",
-			"Keybase":    "https://keybase.io/%s",
-			"Medium":     "https://medium.com/@%s",
-			"Behance":    "https://www.behance.net/%s",
-			"SoundCloud": "https://soundcloud.com/%s",
-			"Twitch":     "https://www.twitch.tv/%s",
-			"Vimeo":      "https://vimeo.com/%s",
-			"AboutMe":    "https://about.me/%s",
-			"Pinterest":  "https://www.pinterest.com/%s",
-			"Tumblr":     "https://%s.tumblr.com",
+			"GitHub":     "https://github.com",
+			"GitLab":     "https://gitlab.com",
+			"Reddit":     "https://www.reddit.com/user",
+			"Keybase":    "https://keybase.io",
+			"Medium":     "https://medium.com/@",
+			"Behance":    "https://www.behance.net",
+			"SoundCloud": "https://soundcloud.com",
+			"Twitch":     "https://www.twitch.tv",
+			"Vimeo":      "https://vimeo.com",
+			"AboutMe":    "https://about.me",
+			"Pinterest":  "https://www.pinterest.com",
 		},
 	}
+}
+
+// buildProfileURL appends the username to a site's base URL as a path segment.
+// url.JoinPath fixes the host from the base URL, so the caller-supplied
+// username cannot redirect the request elsewhere.
+func buildProfileURL(base, username string) (string, error) {
+	if !strings.HasPrefix(base, "https://") && !strings.HasPrefix(base, "http://") {
+		return "", fmt.Errorf("site base url must be absolute")
+	}
+	joined, err := url.JoinPath(base, username)
+	if err != nil {
+		return "", fmt.Errorf("build profile url: %w", err)
+	}
+	return joined, nil
 }
 
 func (t *UsernameSearchTool) Name() string { return "username_search" }
@@ -77,8 +95,8 @@ func (t *UsernameSearchTool) Run(ctx context.Context, query map[string]interface
 		wg.Add(1)
 		go func(site, template string) {
 			defer wg.Done()
-			profileURL := fmt.Sprintf(template, url.PathEscape(username))
-			if err := assertHostPinned(template, profileURL); err != nil {
+			profileURL, err := buildProfileURL(template, username)
+			if err != nil {
 				mu.Lock()
 				skipped = append(skipped, site)
 				mu.Unlock()

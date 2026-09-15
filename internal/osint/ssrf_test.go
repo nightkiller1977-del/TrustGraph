@@ -54,27 +54,38 @@ func TestValidateUsername_RejectsURLDelimiters(t *testing.T) {
 	assert.Equal(t, "alice.bob-1_2", got)
 }
 
-// A subdomain-style template (https://%s.tumblr.com) must not let a username
-// move the request to a different domain.
-func TestAssertHostPinned_SubdomainTemplate(t *testing.T) {
-	tmpl := "https://%s.tumblr.com"
-	require.NoError(t, assertHostPinned(tmpl, "https://alice.tumblr.com"))
-	for _, built := range []string{
-		"https://evil.com",
-		"https://evil.com.tumblr.com.attacker.net",
-		"https://tumblr.com",
-		"http://alice.tumblr.com.evil.com",
-	} {
-		assert.Error(t, assertHostPinned(tmpl, built), "built url %q must be rejected", built)
+// buildProfileURL must keep the request on the site's host, no matter what the
+// username contains and whether or not the base carries a trailing path.
+func TestBuildProfileURL_StaysOnBaseHost(t *testing.T) {
+	ok := []struct{ base, user, want string }{
+		{"https://github.com", "alice", "https://github.com/alice"},
+		{"https://medium.com/@", "alice", "https://medium.com/@/alice"},
+		{"https://www.reddit.com/user", "alice", "https://www.reddit.com/user/alice"},
+	}
+	for _, c := range ok {
+		got, err := buildProfileURL(c.base, c.user)
+		require.NoError(t, err)
+		assert.Equal(t, c.want, got)
+	}
+
+	for _, base := range []string{"https://github.com", "https://medium.com/@", "https://www.reddit.com/user"} {
+		for _, user := range []string{"..", "../..", "..%2F..%2Fevil", "a/b", "@evil.com", "evil.com", "a:b", "a?x=1", "a#f"} {
+			got, err := buildProfileURL(base, user)
+			if err != nil {
+				continue
+			}
+			parsed, perr := url.Parse(got)
+			require.NoError(t, perr)
+			want, _ := url.Parse(base)
+			assert.Equal(t, want.Host, parsed.Host, "username %q escaped host via base %q", user, base)
+			assert.Nil(t, parsed.User, "username %q injected userinfo", user)
+		}
 	}
 }
 
-func TestAssertHostPinned_PathTemplate(t *testing.T) {
-	tmpl := "https://github.com/%s"
-	require.NoError(t, assertHostPinned(tmpl, "https://github.com/alice"))
-	for _, built := range []string{"https://evil.com/alice", "https://github.com.evil.com/alice", "https://user@github.com/alice"} {
-		assert.Error(t, assertHostPinned(tmpl, built), "built url %q must be rejected", built)
-	}
+func TestBuildProfileURL_RejectsRelativeBase(t *testing.T) {
+	_, err := buildProfileURL("/github.com", "alice")
+	assert.Error(t, err)
 }
 
 // The hostile-domain regression: a domain carrying URL syntax used to pass the
